@@ -1,0 +1,11 @@
+namespace inkprint {
+    boolean start_server(u16 port, string storage_path, string printer_name, PrintJobListener? listener);
+    boolean stop_server();
+    string get_version();
+    string get_local_ip();
+};
+
+[Trait, WithForeign]
+interface PrintJobListener {
+    void on_job_received(u32 job_id, string file_path, string file_name, u64 size_bytes);
+};

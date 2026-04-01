@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">InkPrint</string>
+    <string name="notification_channel_service">Printer Service</string>
+    <string name="notification_channel_jobs">Print Jobs</string>
+    <string name="service_running">InkPrint service is running</string>
+    <string name="service_stopped">InkPrint service stopped</string>
+</resources>

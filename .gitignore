@@ -1,0 +1,26 @@
+# Rust
+/target/
+Cargo.lock
+
+# Android build
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+*.apk
+*.aab
+
+# Android JNI libs (built by cargo-ndk, not checked in)
+android/app/src/main/jniLibs/
+android/android/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Claude Code local settings (personal, not project config)
+.claude/settings.local.json
+
+# macOS
+.DS_Store

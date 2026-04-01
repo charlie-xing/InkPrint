@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <external-path name="inkprint_docs" path="Documents/InkPrint/" />
+    <external-files-path name="inkprint_files" path="InkPrint/" />
+</paths>
