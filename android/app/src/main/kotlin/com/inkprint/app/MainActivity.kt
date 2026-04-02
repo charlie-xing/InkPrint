@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -227,9 +228,18 @@ data class FileEntry(val name: String, val path: String, val sizeBytes: Long, va
 
 // ── File browser card ────────────────────────────────────────────────────────
 
+private const val PAGE_SIZE = 5
+
 @Composable
 fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit) {
     val dateFmt = remember { SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()) }
+    var currentPage by remember { mutableStateOf(0) }
+
+    // Reset to first page when file list changes
+    val totalPages = maxOf(1, (files.size + PAGE_SIZE - 1) / PAGE_SIZE)
+    if (currentPage >= totalPages) currentPage = 0
+
+    val pageFiles = files.drop(currentPage * PAGE_SIZE).take(PAGE_SIZE)
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -237,8 +247,12 @@ fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Printed Files", fontWeight = FontWeight.Bold, fontSize = 15.sp,
-                    modifier = Modifier.weight(1f))
+                Text(
+                    "Printed Files",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    modifier = Modifier.weight(1f)
+                )
                 Text("${files.size}", color = Color.Gray, fontSize = 13.sp)
             }
 
@@ -253,7 +267,7 @@ fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit) {
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    files.forEach { file ->
+                    pageFiles.forEach { file ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -282,6 +296,35 @@ fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit) {
                         }
                     }
                 }
+
+                // Pagination controls (only when more than one page)
+                if (totalPages > 1) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        TextButton(
+                            onClick = { if (currentPage > 0) currentPage-- },
+                            enabled = currentPage > 0
+                        ) {
+                            Text("◀  Prev", fontSize = 13.sp)
+                        }
+                        Text(
+                            "${currentPage + 1} / $totalPages",
+                            fontSize = 13.sp,
+                            color = Color.Gray,
+                            textAlign = TextAlign.Center
+                        )
+                        TextButton(
+                            onClick = { if (currentPage < totalPages - 1) currentPage++ },
+                            enabled = currentPage < totalPages - 1
+                        ) {
+                            Text("Next  ▶", fontSize = 13.sp)
+                        }
+                    }
+                }
             }
         }
     }
@@ -307,7 +350,6 @@ fun AddPrinterInstructionsCard(ip: String, port: String) {
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column {
-            // Header — tap to expand/collapse
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -325,12 +367,14 @@ fun AddPrinterInstructionsCard(ip: String, port: String) {
             }
 
             AnimatedVisibility(visible = expanded) {
-                Column(modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    OsSection("macOS")  { MacOsInstructions(ip, port) }
+                Column(
+                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    OsSection("macOS")   { MacOsInstructions(ip, port) }
                     OsSection("Windows") { WindowsInstructions(ip, port) }
-                    OsSection("Linux")  { LinuxInstructions(ip, port) }
-                    OsSection("iOS")    { IosInstructions() }
+                    OsSection("Linux")   { LinuxInstructions(ip, port) }
+                    OsSection("iOS / iPadOS") { IosInstructions() }
                     OsSection("Android") { AndroidInstructions(ip, port) }
                 }
             }
@@ -351,8 +395,12 @@ fun OsSection(title: String, content: @Composable () -> Unit) {
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
-                modifier = Modifier.weight(1f))
+            Text(
+                title,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                modifier = Modifier.weight(1f)
+            )
             Text(if (open) "▲" else "▼", color = Color.Gray, fontSize = 11.sp)
         }
         AnimatedVisibility(visible = open) {
@@ -369,9 +417,32 @@ fun OsSection(title: String, content: @Composable () -> Unit) {
 @Composable
 fun MacOsInstructions(ip: String, port: String) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Recommended — Terminal (custom PPD)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-        Text("Forces macOS to send PDF instead of PostScript:", fontSize = 12.sp, color = Color.Gray)
+
+        // Method 1 — AirPrint GUI
+        InfoBadge("✅ Recommended — Auto-discovery (AirPrint)")
+        Text(
+            "Make sure InkPrint service is running and your Mac is on the same WiFi network.",
+            fontSize = 12.sp, color = Color.Gray
+        )
+        Step(1, "Apple menu → System Settings → Printers & Scanners")
+        Step(2, "Click Add Printer, Scanner or Fax…")
+        Step(3, "InkPrint appears in the list — select it")
+        Step(4, "Use: AirPrint is selected automatically → click Add")
+        Text(
+            "No driver download needed. macOS uses the built-in AirPrint driver.",
+            fontSize = 12.sp, color = Color(0xFF388E3C)
+        )
+
+        HorizontalDivider()
+
+        // Method 2 — Terminal (force PDF)
+        InfoBadge("🖥️ Alternative — Terminal (force PDF output)")
+        Text(
+            "Use this if AirPrint sends PostScript instead of PDF on your system.",
+            fontSize = 12.sp, color = Color.Gray
+        )
         CodeBlock(
+            "# Create a PPD that forces PDF output\n" +
             "cat > /tmp/inkprint.ppd << 'EOF'\n" +
             "*PPD-Adobe: \"4.3\"\n" +
             "*FormatVersion: \"4.3\"\n" +
@@ -395,11 +466,13 @@ fun MacOsInstructions(ip: String, port: String) {
             "*DefaultImageableArea: A4\n" +
             "*ImageableArea A4/A4: \"0 0 595 842\"\n" +
             "*ImageableArea Letter/Letter: \"0 0 612 792\"\n" +
-            "EOF"
+            "EOF\n\n" +
+            "lpadmin -x InkPrint 2>/dev/null\n" +
+            "lpadmin -p InkPrint -E \\\n" +
+            "  -v ipp://$ip:$port/ipp/print \\\n" +
+            "  -P /tmp/inkprint.ppd"
         )
-        CodeBlock("lpadmin -x InkPrint 2>/dev/null\nlpadmin -p InkPrint -E \\\n  -v ipp://$ip:$port/ipp/print \\\n  -P /tmp/inkprint.ppd")
-        HorizontalDivider()
-        Text("Verify", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+        Text("Verify with:", fontSize = 12.sp, color = Color.Gray)
         CodeBlock("lpstat -p InkPrint")
     }
 }
@@ -407,60 +480,133 @@ fun MacOsInstructions(ip: String, port: String) {
 @Composable
 fun WindowsInstructions(ip: String, port: String) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Automatic", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+
+        InfoBadge("✅ Automatic — Bonjour/IPP discovery")
         Step(1, "Settings → Bluetooth & devices → Printers & scanners")
-        Step(2, "Click Add device — InkPrint should appear automatically")
+        Step(2, "Click Add device — InkPrint appears automatically on the same network")
         Step(3, "Click Add device to confirm")
+        Text(
+            "Windows 10/11 discovers IPP printers automatically via Bonjour (requires Bonjour service running, typically installed with iTunes or Apple devices).",
+            fontSize = 12.sp, color = Color.Gray
+        )
+
         HorizontalDivider()
-        Text("Manual", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+
+        InfoBadge("🔧 Manual — Add by IP address")
         Step(1, "Settings → Bluetooth & devices → Printers & scanners")
         Step(2, "Add device → \"The printer that I want isn't listed\"")
-        Step(3, "Select a shared printer by name:")
-        CodeBlock("http://$ip:$port/ipp/print")
-        Step(4, "Follow wizard, choose Generic / Text Only driver")
+        Step(3, "Select \"Add a printer using an IP address or hostname\"")
+        Step(4, "Protocol: IPP  /  Hostname or IP address:")
+        CodeBlock("$ip")
+        Step(5, "Port number: $port  /  Queue: ipp/print")
+        Step(6, "Driver: Generic / Text Only — then click Next to finish")
+        Text(
+            "Printed files are saved as PDF on the BOOX device in Documents/InkPrint/.",
+            fontSize = 12.sp, color = Color(0xFF388E3C)
+        )
     }
 }
 
 @Composable
 fun LinuxInstructions(ip: String, port: String) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("CUPS command line", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-        CodeBlock("sudo lpadmin -p InkPrint -E \\\n  -v ipp://$ip:$port/ipp/print \\\n  -m everywhere\n\n# Set as default (optional)\nsudo lpoptions -d InkPrint")
+
+        InfoBadge("✅ CUPS — IPP Everywhere (recommended)")
+        Text("Works on Ubuntu, Debian, Fedora, Arch, and most distros.", fontSize = 12.sp, color = Color.Gray)
+        CodeBlock(
+            "# Add printer (driverless IPP Everywhere)\n" +
+            "sudo lpadmin -p InkPrint -E \\\n" +
+            "  -v ipp://$ip:$port/ipp/print \\\n" +
+            "  -m everywhere\n\n" +
+            "# Set as default (optional)\n" +
+            "sudo lpoptions -d InkPrint\n\n" +
+            "# Print a file\n" +
+            "lp -d InkPrint /path/to/document.pdf"
+        )
+
         HorizontalDivider()
-        Text("Print test", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-        CodeBlock("lp -d InkPrint /path/to/document.pdf")
+
+        InfoBadge("🖥️ GNOME / KDE GUI")
+        Step(1, "Settings → Printers → Add a Printer")
+        Step(2, "Enter the IPP address manually:")
+        CodeBlock("ipp://$ip:$port/ipp/print")
+        Step(3, "Select IPP Everywhere or Generic driver → Apply")
     }
 }
 
 @Composable
 fun IosInstructions() {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("iOS supports AirPrint natively", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-        Step(1, "Make sure InkPrint service is running and your iPhone is on the same WiFi network")
-        Step(2, "In any app (Safari, Files, Mail…), tap the Share button → Print")
-        Step(3, "Tap Select Printer — InkPrint should appear automatically")
-        Step(4, "Select it and tap Print")
-        Text("Note: no configuration needed on iOS.", fontSize = 12.sp, color = Color.Gray)
+
+        InfoBadge("✅ AirPrint — Zero configuration")
+        Text(
+            "iPhone and iPad support AirPrint natively. No app or setup needed.",
+            fontSize = 12.sp, color = Color.Gray
+        )
+        Step(1, "Start InkPrint service on your BOOX device")
+        Step(2, "Connect your iPhone/iPad to the same WiFi network")
+        Step(3, "Open any app (Safari, Files, Mail, Photos…)")
+        Step(4, "Tap the Share button  →  Print")
+        Step(5, "Tap Select Printer — InkPrint appears automatically")
+        Step(6, "Tap Print — the file is saved to BOOX's Documents/InkPrint/")
+        Text(
+            "Supported file types: PDF, images, web pages, documents.",
+            fontSize = 12.sp, color = Color(0xFF388E3C)
+        )
+
+        HorizontalDivider()
+
+        InfoBadge("⚠️ Hotspot limitation")
+        Text(
+            "If your iPhone is sharing a Personal Hotspot, the BOOX device connected to it cannot be discovered via AirPrint. Use a shared WiFi router instead.",
+            fontSize = 12.sp, color = Color(0xFFBF360C)
+        )
     }
 }
 
 @Composable
 fun AndroidInstructions(ip: String, port: String) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Via print-capable apps", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-        Step(1, "Install an IPP-capable app such as \"Print & Share\" or \"HP Smart\" from Google Play")
-        Step(2, "Add a network printer using the address:")
-        CodeBlock("ipp://$ip:$port/ipp/print")
-        Step(3, "Select InkPrint and print any document")
+
+        InfoBadge("✅ Built-in Android Print Service")
+        Text("Android 8+ includes an IPP-capable print service.", fontSize = 12.sp, color = Color.Gray)
+        Step(1, "Start InkPrint service on BOOX and connect to the same WiFi")
+        Step(2, "Settings → Connected devices → Connection preferences → Printing")
+        Step(3, "Tap Default Print Service → Enable it")
+        Step(4, "InkPrint should appear automatically")
+        Step(5, "In any app, open Share / Print menu → select InkPrint")
+
         HorizontalDivider()
-        Text("Via built-in Android print", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-        Step(1, "Settings → Connected devices → Connection preferences → Printing")
-        Step(2, "Add service → Default Print Service")
-        Step(3, "InkPrint should appear automatically on the same WiFi network")
+
+        InfoBadge("🖨️ Manual IPP address")
+        Text("If auto-discovery doesn't find InkPrint:", fontSize = 12.sp, color = Color.Gray)
+        Step(1, "In Default Print Service, tap Add printer")
+        Step(2, "Enter the printer address:")
+        CodeBlock("ipp://$ip:$port/ipp/print")
+
+        HorizontalDivider()
+
+        InfoBadge("📱 Third-party apps")
+        Step(1, "Install \"Print & Share\", \"HP Smart\", or \"Mopria Print Service\" from Google Play")
+        Step(2, "Add a network printer with address:")
+        CodeBlock("ipp://$ip:$port/ipp/print")
     }
 }
 
 // ── Shared UI helpers ─────────────────────────────────────────────────────────
+
+@Composable
+fun InfoBadge(text: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFFE8F0FE))
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Text(text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1565C0))
+    }
+}
 
 @Composable
 fun CopyableText(text: String) {
@@ -475,8 +621,13 @@ fun CopyableText(text: String) {
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text, fontFamily = FontFamily.Monospace, fontSize = 12.sp,
-            color = Color(0xFF1565C0), modifier = Modifier.weight(1f))
+        Text(
+            text,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            color = Color(0xFF1565C0),
+            modifier = Modifier.weight(1f)
+        )
         Text(if (copied) "Copied!" else "Copy", fontSize = 11.sp, color = Color.Gray)
     }
 }
@@ -485,7 +636,9 @@ fun CopyableText(text: String) {
 fun Step(number: Int, text: String) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Box(
-            modifier = Modifier.size(22.dp).clip(RoundedCornerShape(11.dp))
+            modifier = Modifier
+                .size(22.dp)
+                .clip(RoundedCornerShape(11.dp))
                 .background(Color(0xFF1565C0)),
             contentAlignment = Alignment.Center
         ) {
@@ -501,7 +654,9 @@ fun CodeBlock(text: String) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     Box(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
             .background(Color(0xFF1E1E1E))
             .clickable { clipboard.setText(AnnotatedString(text)); copied = true }
             .padding(10.dp)
