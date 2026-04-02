@@ -30,7 +30,7 @@ class PrinterService : Service() {
     private var isRunning = false
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nsdManager: NsdManager? = null
-    private val nsdListeners = mutableListOf<NsdManager.RegistrationListener>()
+    private var nsdListener: NsdManager.RegistrationListener? = null
 
     private val printJobListener = object : PrintJobListener {
         override fun onJobReceived(jobId: UInt, filePath: String, fileName: String, sizeBytes: ULong) {
@@ -94,102 +94,76 @@ class PrinterService : Service() {
             val ip = try { getLocalIp() } catch (e: Exception) { "unknown" }
             Log.i(TAG, "InkPrint server started on $ip:$DEFAULT_PORT")
             updateNotification("Running on $ip:$DEFAULT_PORT")
-            registerMdnsServices(ip)
+            registerMdns(ip)
         } else {
             Log.e(TAG, "Failed to start InkPrint server")
             updateNotification("Failed to start")
         }
     }
 
-    private fun registerMdnsServices(ip: String) {
+    private fun registerMdns(ip: String) {
         val nsd = getSystemService(NSD_SERVICE) as NsdManager
         nsdManager = nsd
 
-        val txtAttrs = mapOf(
-            "txtvers"  to "1",
-            "pdl"      to "application/pdf,image/urf,image/pwg-raster,image/jpeg",
-            "rp"       to "ipp/print",
-            "ty"       to "InkPrint Virtual Printer",
-            "adminurl" to "http://$ip:${DEFAULT_PORT.toInt()}/",
-            "UUID"     to "a7d4b3e2-1c5f-4d8a-9e0b-2f6c8d3a1b4e",
-            "Color"    to "F",
-            "Duplex"   to "F",
-            "Fax"      to "F",
-            "Scan"     to "F",
-            "Copies"   to "F",
-            "PaperMax" to "legal-A4",
-            "note"     to "E-ink reader virtual printer",
-            "URF"      to "CP1,W8,RS300",
-        )
-
-        // Register _ipp._tcp as the primary service type.
-        // Android NsdManager (API < 33) does NOT automatically create a base _ipp._tcp PTR record
-        // when a subtype like _universal._sub._ipp._tcp is registered — so we register the base
-        // type explicitly. This is what dns-sd -B _ipp._tcp and most print clients browse for.
-        // On API 33+ devices we also register the _universal subtype for AirPrint/macOS.
-        val baseType = "_ipp._tcp"
-        val baseInfo = NsdServiceInfo().apply {
+        // Register _universal._sub._ipp._tcp.
+        // On Android 12+ mDNSResponder (per RFC 6763 §7.1) automatically creates BOTH:
+        //   • _ipp._tcp.local.              PTR → InkPrint._ipp._tcp.local.  (base, for all clients)
+        //   • _universal._sub._ipp._tcp.local. PTR → InkPrint._ipp._tcp.local.  (AirPrint subtype)
+        // macOS reads the _universal subtype to auto-select "AirPrint" in Add Printer.
+        val info = NsdServiceInfo().apply {
             serviceName = "InkPrint"
-            serviceType = baseType
+            serviceType = "_universal._sub._ipp._tcp"
             port = DEFAULT_PORT.toInt()
-            txtAttrs.forEach { (k, v) -> setAttribute(k, v) }
+            setAttribute("txtvers",  "1")
+            setAttribute("pdl",      "application/pdf,image/urf,image/pwg-raster,image/jpeg")
+            setAttribute("rp",       "ipp/print")
+            setAttribute("ty",       "InkPrint Virtual Printer")
+            setAttribute("adminurl", "http://$ip:${DEFAULT_PORT.toInt()}/")
+            setAttribute("UUID",     "a7d4b3e2-1c5f-4d8a-9e0b-2f6c8d3a1b4e")
+            setAttribute("Color",    "F")
+            setAttribute("Duplex",   "F")
+            setAttribute("Fax",      "F")
+            setAttribute("Scan",     "F")
+            setAttribute("Copies",   "F")
+            setAttribute("PaperMax", "legal-A4")
+            setAttribute("note",     "E-ink reader virtual printer")
+            setAttribute("URF",      "CP1,W8,RS300")
         }
-        val baseListener = makeListener(baseType)
-        nsdListeners.add(baseListener)
+        val listener = object : NsdManager.RegistrationListener {
+            override fun onRegistrationFailed(si: NsdServiceInfo, err: Int) {
+                Log.e(TAG, "mDNS register FAILED err=$err")
+            }
+            override fun onUnregistrationFailed(si: NsdServiceInfo, err: Int) {
+                Log.w(TAG, "mDNS unregister failed err=$err")
+            }
+            override fun onServiceRegistered(si: NsdServiceInfo) {
+                Log.i(TAG, "mDNS registered: ${si.serviceName} [_universal._sub._ipp._tcp]")
+            }
+            override fun onServiceUnregistered(si: NsdServiceInfo) {
+                Log.i(TAG, "mDNS unregistered: ${si.serviceName}")
+            }
+        }
+        nsdListener = listener
         try {
-            nsd.registerService(baseInfo, NsdManager.PROTOCOL_DNS_SD, baseListener)
+            nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener)
         } catch (e: Exception) {
-            Log.e(TAG, "NsdManager register exception [$baseType]: ${e.message}")
-            nsdListeners.remove(baseListener)
-        }
-
-        // On Android 13+ (API 33), also register the _universal._sub._ipp._tcp subtype so
-        // macOS discovers this printer as "AirPrint" automatically.
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            val subtypeInfo = NsdServiceInfo().apply {
-                serviceName = "InkPrint"
-                serviceType = "_universal._sub._ipp._tcp"
-                port = DEFAULT_PORT.toInt()
-                txtAttrs.forEach { (k, v) -> setAttribute(k, v) }
-            }
-            val subtypeListener = makeListener("_universal._sub._ipp._tcp")
-            nsdListeners.add(subtypeListener)
-            try {
-                nsd.registerService(subtypeInfo, NsdManager.PROTOCOL_DNS_SD, subtypeListener)
-            } catch (e: Exception) {
-                Log.e(TAG, "NsdManager register exception [_universal._sub._ipp._tcp]: ${e.message}")
-                nsdListeners.remove(subtypeListener)
-            }
+            Log.e(TAG, "NsdManager register exception: ${e.message}")
+            nsdListener = null
         }
     }
 
-    private fun makeListener(serviceType: String) = object : NsdManager.RegistrationListener {
-        override fun onRegistrationFailed(si: NsdServiceInfo, err: Int) {
-            Log.e(TAG, "mDNS register FAILED [$serviceType] err=$err")
-        }
-        override fun onUnregistrationFailed(si: NsdServiceInfo, err: Int) {
-            Log.w(TAG, "mDNS unregister failed [$serviceType] err=$err")
-        }
-        override fun onServiceRegistered(si: NsdServiceInfo) {
-            Log.i(TAG, "mDNS registered: ${si.serviceName} [$serviceType]")
-        }
-        override fun onServiceUnregistered(si: NsdServiceInfo) {
-            Log.i(TAG, "mDNS unregistered: ${si.serviceName} [$serviceType]")
-        }
-    }
-
-    private fun unregisterMdnsServices() {
+    private fun unregisterMdns() {
         val nsd = nsdManager ?: return
-        nsdListeners.forEach { listener ->
-            try { nsd.unregisterService(listener) } catch (_: Exception) {}
+        nsdListener?.let {
+            try { nsd.unregisterService(it) } catch (_: Exception) {}
         }
-        nsdListeners.clear()
+        nsdListener = null
         nsdManager = null
     }
 
     private fun stopPrinterService() {
         if (!isRunning) return
-        unregisterMdnsServices()
+        unregisterMdns()
         try {
             stopServer()
         } catch (e: Exception) {

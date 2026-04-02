@@ -25,12 +25,26 @@ impl PrintJobCallback for ListenerCallback {
 
 static SERVER_HANDLE: Lazy<Mutex<Option<ServerHandle>>> = Lazy::new(|| Mutex::new(None));
 
+#[cfg(target_os = "android")]
+fn init_android_logging() {
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Debug)
+            .with_tag("inkprint-rs"),
+    );
+    // Bridge tracing:: → log:: → android_logger so tracing::error!/info! appear in logcat
+    tracing_log::LogTracer::init().ok();
+}
+
 pub fn start_server(
     port: u16,
     storage_path: String,
     printer_name: String,
     listener: Option<Arc<dyn PrintJobListener>>,
 ) -> bool {
+    #[cfg(target_os = "android")]
+    init_android_logging();
+
     let mut handle = SERVER_HANDLE.lock().unwrap();
     if handle.is_some() {
         tracing::warn!("Server already running");

@@ -8,6 +8,7 @@ use tokio::sync::oneshot;
 
 use crate::ipp::operations::PrintJobCallback;
 use crate::ipp::printer::PrinterState;
+use crate::mdns::advertiser::MdnsAdvertiser;
 use super::http::HttpServer;
 
 pub struct ServerConfig {
@@ -19,12 +20,14 @@ pub struct ServerConfig {
 
 pub struct ServerHandle {
     pub shutdown_tx: oneshot::Sender<()>,
+    pub mdns_tx: oneshot::Sender<()>,
     pub local_ip: Ipv4Addr,
     pub port: u16,
 }
 
 impl ServerHandle {
     pub fn stop(self) {
+        let _ = self.mdns_tx.send(());
         let _ = self.shutdown_tx.send(());
     }
 
@@ -68,10 +71,20 @@ pub async fn start(config: ServerConfig) -> Result<ServerHandle, Box<dyn std::er
     tracing::info!("IPP HTTP server bound to {}", addr);
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let (mdns_tx, mdns_rx) = oneshot::channel::<()>();
 
     let http_server = HttpServer::new(printer.clone(), config.callback);
 
-    // mDNS is handled by Android NsdManager on the Kotlin side; not started here.
+    // Start mDNS advertiser: broadcasts _ipp._tcp + _universal._sub._ipp._tcp (AirPrint).
+    // This is handled in Rust (not Android NsdManager) so that subtype PTR records are
+    // correct on all Android versions — NsdManager on API < 33 does not create proper
+    // subtype PTR structure needed for macOS AirPrint auto-discovery.
+    let mdns = MdnsAdvertiser::new(config.printer_name.clone(), local_ip, config.port);
+    tokio::spawn(async move {
+        if let Err(e) = mdns.start(mdns_rx).await {
+            tracing::error!("mDNS error: {}", e);
+        }
+    });
 
     // Start HTTP server with the pre-bound listener
     tokio::spawn(async move {
@@ -82,6 +95,7 @@ pub async fn start(config: ServerConfig) -> Result<ServerHandle, Box<dyn std::er
 
     Ok(ServerHandle {
         shutdown_tx,
+        mdns_tx,
         local_ip,
         port: config.port,
     })
