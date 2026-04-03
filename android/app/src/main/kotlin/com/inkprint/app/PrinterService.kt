@@ -29,6 +29,7 @@ class PrinterService : Service() {
 
     private var isRunning = false
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private var nsdManager: NsdManager? = null
     private var nsdListener: NsdManager.RegistrationListener? = null
 
@@ -74,6 +75,13 @@ class PrinterService : Service() {
         val wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         multicastLock = wifiManager.createMulticastLock("inkprint_mdns").also {
             it.setReferenceCounted(true)
+            it.acquire()
+        }
+        // Keep WiFi radio active while service runs so mDNS responses are not
+        // dropped by Android power-save when the screen is off.
+        @Suppress("DEPRECATION")
+        wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "inkprint_wifi").also {
+            it.setReferenceCounted(false)
             it.acquire()
         }
 
@@ -172,6 +180,10 @@ class PrinterService : Service() {
         multicastLock?.let {
             if (it.isHeld) it.release()
             multicastLock = null
+        }
+        wifiLock?.let {
+            if (it.isHeld) it.release()
+            wifiLock = null
         }
         isRunning = false
         Log.i(TAG, "InkPrint server stopped")
