@@ -3,6 +3,10 @@
 Turn your BOOX (or any Android e-ink reader) into a wireless network printer.  
 Documents printed from any device on your LAN are saved as PDF directly to the BOOX.
 
+| macOS — print to InkPrint from Chrome | Android app — file received |
+|:---:|:---:|
+| ![macOS Chrome print dialog showing InkPrint as destination](docs/screenshots/macos-print-dialog.png) | ![InkPrint Android app showing received PDF file](docs/screenshots/android-app.png) |
+
 ---
 
 ## How it works
