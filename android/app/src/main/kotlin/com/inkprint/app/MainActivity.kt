@@ -211,6 +211,28 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.height(16.dp))
 
             // Exit + Feedback
+            var showFeedbackDialog by remember { mutableStateOf(false) }
+
+            if (showFeedbackDialog) {
+                AlertDialog(
+                    onDismissRequest = { showFeedbackDialog = false },
+                    title = { Text("Feedback") },
+                    text = {
+                        Text(
+                            "InkPrint is an open-source project.\n\n" +
+                            "If you have any suggestions or encounter issues, feel free to send an email to:\n\n" +
+                            "xjohn1666@gmail.com\n\n" +
+                            "The author will get back to you as soon as possible. Thank you for your support!"
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showFeedbackDialog = false }) {
+                            Text("OK")
+                        }
+                    }
+                )
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -223,14 +245,7 @@ class MainActivity : ComponentActivity() {
                     Text("Exit App", fontSize = 15.sp)
                 }
                 OutlinedButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_SENDTO).apply {
-                            data = android.net.Uri.parse("mailto:")
-                            putExtra(Intent.EXTRA_EMAIL, arrayOf("xjohn1666@gmail.com"))
-                            putExtra(Intent.EXTRA_SUBJECT, "InkPrint Feedback")
-                        }
-                        startActivity(Intent.createChooser(intent, "Send Feedback"))
-                    },
+                    onClick = { showFeedbackDialog = true },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Feedback", fontSize = 15.sp)
