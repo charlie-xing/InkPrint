@@ -210,13 +210,31 @@ class MainActivity : ComponentActivity() {
 
             Spacer(Modifier.height(16.dp))
 
-            // Exit
-            OutlinedButton(
-                onClick = { exitApp() },
+            // Exit + Feedback
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB71C1C))
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Exit App", fontSize = 15.sp)
+                OutlinedButton(
+                    onClick = { exitApp() },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB71C1C))
+                ) {
+                    Text("Exit App", fontSize = 15.sp)
+                }
+                OutlinedButton(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_SENDTO).apply {
+                            data = android.net.Uri.parse("mailto:")
+                            putExtra(Intent.EXTRA_EMAIL, arrayOf("xjohn1666@gmail.com"))
+                            putExtra(Intent.EXTRA_SUBJECT, "InkPrint Feedback")
+                        }
+                        startActivity(Intent.createChooser(intent, "Send Feedback"))
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Feedback", fontSize = 15.sp)
+                }
             }
 
             Spacer(Modifier.height(16.dp))

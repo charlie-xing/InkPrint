@@ -24,3 +24,10 @@ android/android/
 
 # macOS
 .DS_Store
+CLAUDE.md
+docs/prompts.md
+
+# Keystore (keep local, do not commit)
+android/inkprint-release.jks
+*.jks
+*.keystore
