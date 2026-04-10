@@ -216,6 +216,7 @@ class PrinterService : Service() {
         nm.notify(NOTIFICATION_ID_SERVICE + jobId, notification)
 
         sendBroadcast(Intent(BROADCAST_JOB_RECEIVED).apply {
+            setPackage(packageName)
             putExtra("job_id", jobId)
             putExtra("file_path", filePath)
             putExtra("file_name", fileName)
