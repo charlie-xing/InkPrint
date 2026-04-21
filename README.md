@@ -67,7 +67,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## Usage
 
-1. Install the APK on your BOOX device
+1. Install the APK on your BOOX (or other android device) device
 2. Open InkPrint and tap **Start Printer Service**
 3. Add the printer on your computer/phone (see below)
 4. Print — the PDF appears in the app's file list and in `Documents/InkPrint/` on the BOOX
@@ -114,7 +114,7 @@ EOF
 
 lpadmin -x InkPrint 2>/dev/null
 lpadmin -p InkPrint -E \
-  -v ipp://<BOOX_IP>:6310/ipp/print \
+  -v ipp://<ANDROID_IP>:6310/ipp/print \
   -P /tmp/inkprint.ppd
 ```
 
@@ -123,14 +123,16 @@ lpadmin -p InkPrint -E \
 ### Windows 10 / 11
 
 **Automatic:**
+
 1. Settings → Bluetooth & devices → Printers & scanners
 2. Click **Add device** — InkPrint appears automatically (requires Bonjour service)
 3. Click **Add device** to confirm
 
 **Manual (add by IP):**
+
 1. Settings → Printers & scanners → Add device
 2. "The printer that I want isn't listed" → Add a printer using an IP address or hostname
-3. Protocol: **IPP** / Hostname: `<BOOX_IP>` / Port: `6310` / Queue: `ipp/print`
+3. Protocol: **IPP** / Hostname: `<ANDROID_IP>` / Port: `6310` / Queue: `ipp/print`
 4. Driver: Generic / Text Only
 
 ---
@@ -140,7 +142,7 @@ lpadmin -p InkPrint -E \
 ```bash
 # Add printer (driverless, IPP Everywhere)
 sudo lpadmin -p InkPrint -E \
-  -v ipp://<BOOX_IP>:6310/ipp/print \
+  -v ipp://<ANDROID_IP>:6310/ipp/print \
   -m everywhere
 
 # Set as default (optional)
@@ -156,7 +158,7 @@ Works on Ubuntu, Debian, Fedora, Arch, and any distro with CUPS.
 
 ### iOS / iPadOS — AirPrint, zero config
 
-1. Connect iPhone/iPad to the **same WiFi network** as the BOOX
+1. Connect iPhone/iPad to the **same WiFi network** as the BOOX(ANDROID)
 2. In any app: **Share → Print**
 3. Tap **Select Printer** — InkPrint appears automatically
 4. Tap **Print**
@@ -168,13 +170,15 @@ Works on Ubuntu, Debian, Fedora, Arch, and any distro with CUPS.
 ### Android
 
 **Built-in Print Service (Android 8+):**
+
 1. Settings → Connected devices → Connection preferences → Printing
 2. Default Print Service → Enable
 3. InkPrint appears automatically on the same WiFi
 
 **Manual:**
+
 1. In Default Print Service, tap Add printer
-2. Enter: `ipp://<BOOX_IP>:6310/ipp/print`
+2. Enter: `ipp://<ANDROID_IP>:6310/ipp/print`
 
 **Third-party apps:** Print & Share, HP Smart, or Mopria Print Service all support IPP.
 
