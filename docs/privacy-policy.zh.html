@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InkPrint 隐私政策</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #5c5c5c;
+    --rule: #e2e2e2;
+    --accent: #1565c0;
+    --note-bg: #f5f7fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16181c;
+      --fg: #e8e8e8;
+      --muted: #a0a4ab;
+      --rule: #2f333a;
+      --accent: #6aa9f0;
+      --note-bg: #1e2127;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.75 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+          "Microsoft YaHei", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0;
+    padding: 48px 16px 80px;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.9rem; line-height: 1.3; margin: 0 0 4px; }
+  h2 {
+    font-size: 1.15rem;
+    margin: 40px 0 10px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+  }
+  .dates { color: var(--muted); font-size: 0.9rem; margin-bottom: 6px; }
+  .langs { font-size: 0.9rem; margin-bottom: 28px; }
+  .langs span { color: var(--muted); }
+  .langs a { margin-right: 4px; }
+  .lede {
+    background: var(--note-bg);
+    border-left: 3px solid var(--accent);
+    padding: 14px 16px;
+    border-radius: 0 6px 6px 0;
+    margin: 0 0 8px;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.93rem; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.88em;
+    background: var(--note-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  a { color: var(--accent); }
+  ul { padding-left: 22px; }
+  li { margin: 5px 0; }
+  footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.88rem; }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>InkPrint 隐私政策</h1>
+  <p class="dates">生效日期 2026 年 9 月 22 日 · 最后更新 2026 年 9 月 22 日</p>
+  <p class="langs"><a href="privacy-policy.html">English</a> · <span>中文</span></p>
+
+  <p class="lede">
+    <strong>InkPrint 不收集、不传输、不共享任何个人数据。</strong>
+    它没有账号体系、没有数据统计、没有广告、也没有服务器。所有经它处理的内容，
+    都只留在你自己的设备和你自己的局域网内。
+  </p>
+
+  <h2>InkPrint 是做什么的</h2>
+  <p>
+    InkPrint 把一台 Android 设备（通常是电子墨水阅读器）变成局域网中的虚拟打印机。
+    同一 Wi-Fi 下的其他设备通过 Bonjour/mDNS 发现它，并使用标准 IPP 打印协议把文档发送过来。
+    每份文档会以 PDF 形式保存在设备上供阅读。InkPrint 不会真的打印到纸上，
+    也不会把文档转发到任何地方。
+  </p>
+
+  <h2>我们收集的信息</h2>
+  <p>
+    <strong>没有。</strong>开发者不运营任何后端服务，也不会从本应用收到任何数据。
+    InkPrint 不包含任何数据统计、崩溃上报、广告或追踪类的库，
+    并且不会向开发者或任何第三方发起网络连接。
+  </p>
+
+  <h2>在你设备上处理的信息</h2>
+  <p>以下内容完全在你的设备本地处理，用于实现打印功能。InkPrint 不会将其发送出设备。</p>
+  <table>
+    <tr><th>内容</th><th>用途</th><th>去向</th></tr>
+    <tr>
+      <td>你打印的文档</td>
+      <td>这正是要打印的对象</td>
+      <td>以 PDF 形式保存在应用自身的目录中，并复制一份到设备的共享 <code>Documents/InkPrint/</code> 目录，以便阅读器应用打开。文件会一直保留，直到你自行删除。</td>
+    </tr>
+    <tr>
+      <td>文档标题</td>
+      <td>用于命名保存下来的文件，方便你辨认</td>
+      <td>作为文件名的一部分保存在设备上。</td>
+    </tr>
+    <tr>
+      <td>发送方计算机上报的用户名，以及任务标题</td>
+      <td>IPP 协议要求据此回答发送方"我的任务状态如何"的查询</td>
+      <td>仅在内存中保留，且只在任务存续期间。从不写入存储，打印服务停止后即丢弃。</td>
+    </tr>
+    <tr>
+      <td>设备的局域网（LAN）IP 地址</td>
+      <td>打印机必须公布一个地址，其他设备才能连上</td>
+      <td>显示在应用界面中，并仅在你的局域网内通过 mDNS 广播。这是一个内网地址，无法从互联网访问。</td>
+    </tr>
+  </table>
+
+  <h2>网络行为</h2>
+  <p>
+    InkPrint 在局域网上监听打印任务，并在同一网络内通过 mDNS 广播自身。
+    它不连接互联网，也没有任何可供连接的远程服务端。
+    Android 要求的 <code>INTERNET</code> 权限，仅用于在局域网上打开一个监听端口。
+  </p>
+
+  <h2>权限说明</h2>
+  <table>
+    <tr><th>权限</th><th>InkPrint 为何需要</th></tr>
+    <tr><td><code>INTERNET</code></td><td>运行本地 IPP 打印服务的网络端口</td></tr>
+    <tr><td><code>ACCESS_NETWORK_STATE</code>、<code>ACCESS_WIFI_STATE</code></td><td>判断 Wi-Fi 是否已连接，并显示可供打印的地址</td></tr>
+    <tr><td><code>CHANGE_WIFI_MULTICAST_STATE</code></td><td>接收 Bonjour/mDNS 自动发现所依赖的组播流量</td></tr>
+    <tr><td><code>WAKE_LOCK</code></td><td>在息屏状态下保持打印机可被访问</td></tr>
+    <tr><td><code>FOREGROUND_SERVICE</code>、<code>FOREGROUND_SERVICE_SPECIAL_USE</code></td><td>保持打印服务运行，并显示一个常驻通知</td></tr>
+    <tr><td><code>POST_NOTIFICATIONS</code></td><td>显示服务状态，并在收到文档时提醒你</td></tr>
+    <tr><td><code>RECEIVE_BOOT_COMPLETED</code></td><td>可选：在设备重启后自动恢复打印服务</td></tr>
+    <tr><td><code>WRITE_EXTERNAL_STORAGE</code>（仅 Android 9 及更早）</td><td>把收到的文档存放到阅读器应用能找到的位置。在 Android 10 及更新的系统上改为通过系统媒体库完成，不申请存储权限。</td></tr>
+  </table>
+
+  <h2>数据共享</h2>
+  <p>
+    InkPrint 不与任何人共享数据。没有第三方 SDK，没有广告合作方，也没有数据处理方——
+    因为根本没有任何数据离开过你的设备。
+  </p>
+
+  <h2>数据保留与删除</h2>
+  <p>
+    收到的文档会一直留在你的设备上，直到你删除它们。你可以用任意文件管理器删除，
+    或者卸载应用以一次性清除——需要注意的是，已复制到共享
+    <code>Documents/InkPrint/</code> 目录中的文件可能在卸载后仍然存在，需要手动删除。
+  </p>
+
+  <h2>安全性</h2>
+  <p>请了解 InkPrint 的工作方式，以便判断在什么场合使用它：</p>
+  <ul>
+    <li>与绝大多数家用网络打印机一样，InkPrint 接受同一局域网内任何设备发来的打印任务，
+        不需要密码。请在你信任的网络中使用，不用时请停止服务。</li>
+    <li>局域网上的打印流量未经加密。这是 IPP 打印的常态，
+        但也意味着它的私密性取决于你所在网络的安全程度。</li>
+    <li>收到的文档以未加密形式存储在设备上，位于共享目录中，
+        其他拥有存储权限的应用可以读取。</li>
+  </ul>
+
+  <h2>儿童</h2>
+  <p>
+    InkPrint 是一款通用工具类应用，并非面向儿童设计，
+    也不会在知情的情况下收集任何年龄段用户的信息。
+  </p>
+
+  <h2>开源</h2>
+  <p>
+    InkPrint 是开源项目。本页的每一条说明都可以对照源代码核实：
+    <a href="https://github.com/charlie-xing/InkPrint">github.com/charlie-xing/InkPrint</a>。
+  </p>
+
+  <h2>本政策的变更</h2>
+  <p>
+    如本政策发生变更，更新后的版本将发布在本地址，并标注新的"最后更新"日期。
+    重大变更还会在应用的版本说明中注明。
+  </p>
+
+  <h2>联系方式</h2>
+  <p>
+    关于本政策或 InkPrint 数据处理方式的疑问，请联系：
+    <a href="mailto:xjohn1666@gmail.com">xjohn1666@gmail.com</a>
+  </p>
+
+  <footer>
+    InkPrint —— 面向电子墨水阅读器的 IPP 虚拟打印机。
+  </footer>
+
+</main>
+</body>
+</html>
