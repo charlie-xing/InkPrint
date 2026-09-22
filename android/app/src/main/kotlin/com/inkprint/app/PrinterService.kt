@@ -6,7 +6,6 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.os.IBinder
-import android.os.Environment
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import uniffi.inkprint.PrintJobListener
@@ -66,9 +65,7 @@ class PrinterService : Service() {
     private fun startPrinterService() {
         if (isRunning) return
 
-        val storageDir = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_DOCUMENTS
-        ).resolve("InkPrint").also { it.mkdirs() }
+        val storageDir = JobStorage.jobDir(this)
 
         startForeground(NOTIFICATION_ID_SERVICE, buildServiceNotification("Starting..."))
 
@@ -192,13 +189,22 @@ class PrinterService : Service() {
     fun onJobReceived(jobId: Int, filePath: String, fileName: String, sizeBytes: Long) {
         Log.i(TAG, "New print job: $fileName ($sizeBytes bytes) -> $filePath")
 
+        val jobFile = java.io.File(filePath)
+
+        // Mirror the job into shared Documents/InkPrint/ so the device's reader
+        // app can find it. Best-effort: the job is already safe in jobDir().
+        val publishedUri = JobStorage.publishToDocuments(this, jobFile)
+        if (publishedUri != null) {
+            Log.i(TAG, "Published $fileName to shared storage: $publishedUri")
+        }
+
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         val openIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(
                 androidx.core.content.FileProvider.getUriForFile(
-                    this@PrinterService, "${packageName}.fileprovider", java.io.File(filePath)
+                    this@PrinterService, "${packageName}.fileprovider", jobFile
                 ),
-                "application/pdf"
+                JobStorage.mimeTypeOf(jobFile)
             )
             flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
         }

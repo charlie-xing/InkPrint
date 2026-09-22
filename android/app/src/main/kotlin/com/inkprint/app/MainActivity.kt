@@ -1,12 +1,16 @@
 package com.inkprint.app
 
+import android.Manifest
 import android.content.*
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -46,8 +50,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val permissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestRuntimePermissions()
         registerReceiver(
             jobReceiver,
             IntentFilter(PrinterService.BROADCAST_JOB_RECEIVED),
@@ -82,6 +90,27 @@ class MainActivity : ComponentActivity() {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
+    /**
+     * Without POST_NOTIFICATIONS the foreground service notification — and with
+     * it the "document received" alerts — are silently dropped on Android 13+.
+     * The legacy write permission is only meaningful on API 28 and below, where
+     * publishing to shared Documents/ still goes through the filesystem.
+     */
+    private fun requestRuntimePermissions() {
+        val wanted = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                @Suppress("DEPRECATION")
+                add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (wanted.isNotEmpty()) permissionLauncher.launch(wanted.toTypedArray())
+    }
+
     private fun isWifiConnected(): Boolean {
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
         val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
@@ -91,15 +120,9 @@ class MainActivity : ComponentActivity() {
     private fun getLocalIpAddress(): String =
         try { getLocalIp() } catch (_: Exception) { "unknown" }
 
-    private fun getStoredFiles(): List<FileEntry> {
-        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-            .resolve("InkPrint")
-        return dir.listFiles()
-            ?.filter { it.isFile }
-            ?.sortedByDescending { it.lastModified() }
-            ?.map { FileEntry(it.name, it.absolutePath, it.length(), it.lastModified()) }
-            ?: emptyList()
-    }
+    private fun getStoredFiles(): List<FileEntry> =
+        JobStorage.listJobs(this)
+            .map { FileEntry(it.name, it.absolutePath, it.length(), it.lastModified()) }
 
     private fun openFile(filePath: String) {
         try {
@@ -107,11 +130,7 @@ class MainActivity : ComponentActivity() {
             val uri = androidx.core.content.FileProvider.getUriForFile(
                 this, "${packageName}.fileprovider", file
             )
-            val mime = when (file.extension.lowercase()) {
-                "pdf" -> "application/pdf"
-                "ps"  -> "application/postscript"
-                else  -> "*/*"
-            }
+            val mime = JobStorage.mimeTypeOf(file)
             startActivity(Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, mime)
                 flags = Intent.FLAG_GRANT_READ_URI_PERMISSION

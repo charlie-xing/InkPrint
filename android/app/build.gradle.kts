@@ -1,8 +1,7 @@
-import java.io.ByteArrayOutputStream
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // Run cargo-ndk to build Rust library and generate UniFFI bindings
@@ -15,7 +14,7 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
         "bash", "-c",
         """
         set -e
-        export ANDROID_NDK_HOME=/Users/xcl/Library/Android/sdk/ndk-bundle
+        export ANDROID_NDK_HOME=${'$'}{ANDROID_NDK_HOME:-/opt/homebrew/share/android-ndk}
         cargo ndk -t arm64-v8a -o ${project.projectDir}/src/main/jniLibs build --release -p inkprint-core
         cargo run --bin uniffi-bindgen generate \
             inkprint-core/src/inkprint.udl \
@@ -31,16 +30,25 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     )
 }
 
+// Release signing credentials never live in the repo. Supply them through
+// ~/.gradle/gradle.properties or the environment — see android/gradle.properties
+// for the property names. Without them, release builds are simply left unsigned.
+fun secret(name: String): String? =
+    (project.findProperty(name) as String?)?.takeIf { it.isNotBlank() }
+        ?: System.getenv(name)?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = secret("INKPRINT_STORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
+
 android {
     namespace = "com.inkprint.app"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.inkprint.app"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 11
-        versionName = "0.11"
+        targetSdk = 36
+        versionCode = 12
+        versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -53,18 +61,20 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = file("${rootProject.rootDir}/inkprint-release.jks")
-            storePassword = "inkprint123"
-            keyAlias = "inkprint"
-            keyPassword = "inkprint123"
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = secret("INKPRINT_STORE_PASSWORD")
+                keyAlias = secret("INKPRINT_KEY_ALIAS")
+                keyPassword = secret("INKPRINT_KEY_PASSWORD")
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -72,17 +82,14 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "17"
     }
     buildFeatures {
         compose = true
-    }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
     }
     packaging {
         resources {
@@ -98,10 +105,10 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
-    implementation("androidx.activity:activity-compose:1.8.2")
-    implementation(platform("androidx.compose:compose-bom:2024.02.00"))
+    implementation("androidx.core:core-ktx:1.16.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.0")
+    implementation("androidx.activity:activity-compose:1.10.1")
+    implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -109,9 +116,9 @@ dependencies {
     implementation("net.java.dev.jna:jna:5.13.0@aar")
 
     testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2024.02.00"))
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.04.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

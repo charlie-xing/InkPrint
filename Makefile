@@ -1,4 +1,4 @@
-.PHONY: all rust-test rust-build-android uniffi-bindings android-debug android-release clean
+.PHONY: all rust-test rust-build-android uniffi-bindings android-debug android-release android-bundle clean
 
 NDK_HOME ?= /opt/homebrew/share/android-ndk
 RUSTC ?= $(HOME)/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustc
@@ -30,6 +30,10 @@ android-debug: rust-build-android uniffi-bindings
 # Build release APK
 android-release: rust-build-android uniffi-bindings
 	JAVA_HOME=$(JAVA_HOME) ANDROID_HOME=$(ANDROID_HOME) cd $(ANDROID_DIR) && JAVA_HOME=$(JAVA_HOME) ANDROID_HOME=$(ANDROID_HOME) ./gradlew assembleRelease
+
+# Build release AAB — this is what Google Play accepts as an upload
+android-bundle: rust-build-android uniffi-bindings
+	cd $(ANDROID_DIR) && JAVA_HOME=$(JAVA_HOME) ANDROID_HOME=$(ANDROID_HOME) ./gradlew bundleRelease
 
 clean:
 	cargo clean

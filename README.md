@@ -35,9 +35,10 @@ macOS / Windows / Linux / iOS / Android
 |-----------|---------|
 | Android (target device) | 8.0+ (API 26+) |
 | Android NDK | r29 |
+| Android SDK platform | 36 (compile & target) |
 | Rust toolchain | nightly |
 | cargo-ndk | latest |
-| JDK | 17 (Java 25 incompatible with Kotlin plugin) |
+| JDK | 17 |
 | macOS build host | Apple Silicon recommended |
 
 ---
@@ -62,6 +63,26 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 > **Note:** Use the rustup nightly toolchain (`RUSTC=~/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustc`).  
 > Homebrew's `rustc` does not include Android targets.
+
+### Release build
+
+Google Play accepts an Android App Bundle, not an APK:
+
+```bash
+make android-bundle   # -> android/app/build/outputs/bundle/release/app-release.aab
+```
+
+Signing credentials are read from Gradle properties or the environment and are
+never stored in the repository. Put them in `~/.gradle/gradle.properties`:
+
+```properties
+INKPRINT_STORE_FILE=/absolute/path/to/inkprint-release.jks
+INKPRINT_STORE_PASSWORD=...
+INKPRINT_KEY_ALIAS=inkprint
+INKPRINT_KEY_PASSWORD=...
+```
+
+Without them the release build still succeeds, but the output is unsigned.
 
 ---
 
