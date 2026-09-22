@@ -21,6 +21,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dashmap = "6"
 thiserror = "2"
 once_cell = "1"
+log = "0.4"
 if-addrs = "0.13"
 libc = "0.2"
 
