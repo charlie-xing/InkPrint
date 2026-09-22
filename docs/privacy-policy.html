@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InkPrint Privacy Policy</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #5c5c5c;
+    --rule: #e2e2e2;
+    --accent: #1565c0;
+    --note-bg: #f5f7fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16181c;
+      --fg: #e8e8e8;
+      --muted: #a0a4ab;
+      --rule: #2f333a;
+      --accent: #6aa9f0;
+      --note-bg: #1e2127;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0;
+    padding: 48px 16px 80px;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 4px; }
+  h2 {
+    font-size: 1.15rem;
+    margin: 40px 0 10px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+  }
+  .dates { color: var(--muted); font-size: 0.9rem; margin-bottom: 28px; }
+  .lede {
+    background: var(--note-bg);
+    border-left: 3px solid var(--accent);
+    padding: 14px 16px;
+    border-radius: 0 6px 6px 0;
+    margin: 0 0 8px;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.93rem; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.88em;
+    background: var(--note-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  a { color: var(--accent); }
+  ul { padding-left: 22px; }
+  li { margin: 5px 0; }
+  footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.88rem; }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>InkPrint Privacy Policy</h1>
+  <p class="dates">Effective 22 September 2026 · Last updated 22 September 2026</p>
+
+  <p class="lede">
+    <strong>InkPrint does not collect, transmit, or share any personal data.</strong>
+    It has no accounts, no analytics, no advertising, and no servers. Everything it
+    handles stays on your own device and your own local network.
+  </p>
+
+  <h2>What InkPrint does</h2>
+  <p>
+    InkPrint turns an Android device — typically an e-ink reader — into a virtual
+    network printer. Other devices on the same Wi-Fi network discover it over
+    Bonjour/mDNS and send documents to it using the standard IPP printing protocol.
+    Each document is saved on the device as a PDF for reading. InkPrint never
+    prints to paper and never forwards a document anywhere.
+  </p>
+
+  <h2>Information we collect</h2>
+  <p>
+    <strong>None.</strong> The developer operates no backend service and receives no
+    data from the app. InkPrint contains no analytics, crash-reporting, advertising,
+    or tracking libraries of any kind, and it makes no network connections to the
+    developer or to any third party.
+  </p>
+
+  <h2>Information processed on your device</h2>
+  <p>
+    The following is handled entirely on your device to make printing work. It is
+    never sent off the device by InkPrint.
+  </p>
+  <table>
+    <tr><th>What</th><th>Why</th><th>Where it goes</th></tr>
+    <tr>
+      <td>The documents you print</td>
+      <td>They are the thing being printed</td>
+      <td>Saved as PDF files in the app's own folder and copied to the device's shared <code>Documents/InkPrint/</code> folder so your reader app can open them. They remain on the device until you delete them.</td>
+    </tr>
+    <tr>
+      <td>Document titles</td>
+      <td>Used to name the saved file so you can recognise it</td>
+      <td>Stored on the device as part of the file name.</td>
+    </tr>
+    <tr>
+      <td>The user name reported by the sending computer, and the job title</td>
+      <td>Required by the IPP protocol to answer a sender's "what is my job status?" query</td>
+      <td>Held in memory only, for the duration of the job. Never written to storage, and discarded when the printer service stops.</td>
+    </tr>
+    <tr>
+      <td>Your device's local network (LAN) IP address</td>
+      <td>A printer has to announce an address for other devices to reach it</td>
+      <td>Shown in the app and broadcast over mDNS on your local network only. It is a private address that is not reachable from the internet.</td>
+    </tr>
+  </table>
+
+  <h2>Network behaviour</h2>
+  <p>
+    InkPrint listens for print jobs on your local network and announces itself over
+    mDNS on that same network. It does not connect to the internet, and it has no
+    remote endpoint to connect to. The <code>INTERNET</code> permission Android
+    requires is used solely to open a listening socket on the local network.
+  </p>
+
+  <h2>Permissions</h2>
+  <table>
+    <tr><th>Permission</th><th>Why InkPrint needs it</th></tr>
+    <tr><td><code>INTERNET</code></td><td>Run the local IPP print server socket</td></tr>
+    <tr><td><code>ACCESS_NETWORK_STATE</code>, <code>ACCESS_WIFI_STATE</code></td><td>Detect whether Wi-Fi is connected and show the address to print to</td></tr>
+    <tr><td><code>CHANGE_WIFI_MULTICAST_STATE</code></td><td>Receive the multicast traffic that Bonjour/mDNS discovery depends on</td></tr>
+    <tr><td><code>WAKE_LOCK</code></td><td>Keep the printer reachable while the screen is off</td></tr>
+    <tr><td><code>FOREGROUND_SERVICE</code>, <code>FOREGROUND_SERVICE_SPECIAL_USE</code></td><td>Keep the print server running, with a visible ongoing notification</td></tr>
+    <tr><td><code>POST_NOTIFICATIONS</code></td><td>Show the service status and tell you when a document arrives</td></tr>
+    <tr><td><code>RECEIVE_BOOT_COMPLETED</code></td><td>Optionally restart the printer service after the device reboots</td></tr>
+    <tr><td><code>WRITE_EXTERNAL_STORAGE</code> (Android 9 and older only)</td><td>Save received documents where your reader app can find them. On Android 10 and newer this is done through the system media store and no storage permission is requested.</td></tr>
+  </table>
+
+  <h2>Sharing</h2>
+  <p>
+    InkPrint does not share data with anyone. There are no third-party SDKs, no
+    advertising partners, and no data processors, because no data ever leaves your
+    device.
+  </p>
+
+  <h2>Retention and deletion</h2>
+  <p>
+    Received documents stay on your device until you remove them. You can delete
+    them with any file manager, or remove all of them at once by uninstalling the
+    app — note that files already copied into the shared
+    <code>Documents/InkPrint/</code> folder may survive uninstallation and can be
+    deleted manually.
+  </p>
+
+  <h2>Security</h2>
+  <p>Please be aware of how InkPrint works so you can decide where to use it:</p>
+  <ul>
+    <li>Like most consumer network printers, InkPrint accepts print jobs from any
+        device on the same local network without a password. Use it on networks you
+        trust, and stop the service when you are not using it.</li>
+    <li>Print traffic on the local network is not encrypted, which is normal for IPP
+        printing but means it is only as private as the network you are on.</li>
+    <li>Received documents are stored unencrypted on the device, in a shared folder
+        that other apps with storage access can read.</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>
+    InkPrint is a general-purpose utility. It is not directed at children and does
+    not knowingly collect information from anyone, of any age.
+  </p>
+
+  <h2>Open source</h2>
+  <p>
+    InkPrint is open source. Every claim on this page can be checked against the
+    code at
+    <a href="https://github.com/charlie-xing/InkPrint">github.com/charlie-xing/InkPrint</a>.
+  </p>
+
+  <h2>Changes to this policy</h2>
+  <p>
+    If this policy changes, the updated version will be published at this address
+    with a new "last updated" date. Material changes will also be noted in the app's
+    release notes.
+  </p>
+
+  <h2>Contact</h2>
+  <p>
+    Questions about this policy or about InkPrint's handling of data:
+    <a href="mailto:xjohn1666@gmail.com">xjohn1666@gmail.com</a>
+  </p>
+
+  <footer>
+    InkPrint — IPP virtual printer for e-ink readers.
+  </footer>
+
+</main>
+</body>
+</html>
