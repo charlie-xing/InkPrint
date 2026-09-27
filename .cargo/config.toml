@@ -1,3 +1,7 @@
 [target.aarch64-linux-android]
 linker = "/opt/homebrew/share/android-ndk/toolchains/llvm/prebuilt/darwin-aarch64/bin/aarch64-linux-android26-clang"
 ar = "/opt/homebrew/share/android-ndk/toolchains/llvm/prebuilt/darwin-aarch64/bin/llvm-ar"
+# Google Play requires 16 KB page support for apps targeting Android 15+.
+# NDK r28+ already links this way; spelling it out keeps older NDKs from
+# producing 4 KB-aligned libraries.
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

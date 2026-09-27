@@ -113,7 +113,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("net.java.dev.jna:jna:5.13.0@aar")
+    implementation("net.java.dev.jna:jna:5.19.1@aar")
+    // Pulled in by Compose; pinned for its 16 KB-page-aligned native library
+    // (the version in the Compose BOM above isn't). Google Play requires 16 KB
+    // page support for apps targeting Android 15+.
+    implementation("androidx.graphics:graphics-path:1.1.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
