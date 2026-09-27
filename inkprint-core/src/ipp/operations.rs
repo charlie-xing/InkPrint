@@ -20,7 +20,7 @@ pub fn dispatch(
     printer_uri: &str,
     callback: Option<&dyn PrintJobCallback>,
 ) -> Vec<u8> {
-    let response = match request.operation_id {
+    let mut response = match request.operation_id {
         IppOperationId::GetPrinterAttributes => {
             handle_get_printer_attributes(request, printer, printer_uri)
         }
@@ -29,6 +29,9 @@ pub fn dispatch(
         }
         IppOperationId::GetJobAttributes => {
             handle_get_job_attributes(request, printer, printer_uri)
+        }
+        IppOperationId::CancelJob => {
+            handle_cancel_job(request, printer)
         }
         IppOperationId::ValidateJob => {
             handle_validate_job(request)
@@ -45,6 +48,11 @@ pub fn dispatch(
                 .build()
         }
     };
+    // Answer in the version the client spoke (RFC 8011 §4.1.8); strict
+    // clients such as ipptool reject a 2.0 reply to a 1.1 request.
+    if matches!(request.version.major, 1 | 2) {
+        response.version = request.version.clone();
+    }
     serialize_response(&response)
 }
 
@@ -152,6 +160,7 @@ fn handle_get_printer_attributes(
             vec![
                 IppValue::Enum(0x0002), // Print-Job
                 IppValue::Enum(0x0004), // Validate-Job
+                IppValue::Enum(0x0008), // Cancel-Job
                 IppValue::Enum(0x0009), // Get-Job-Attributes
                 IppValue::Enum(0x000B), // Get-Printer-Attributes
             ],
@@ -583,14 +592,7 @@ fn handle_get_job_attributes(
     printer: &Arc<PrinterState>,
     printer_uri: &str,
 ) -> IppResponse {
-    let job_id = request.get_operation_attributes()
-        .and_then(|g| g.get("job-id"))
-        .and_then(|v| match v {
-            IppValue::Integer(i) => Some(*i as u32),
-            _ => None,
-        });
-
-    let job_id = match job_id {
+    let job_id = match requested_job_id(request) {
         Some(id) => id,
         None => return error_response(request.request_id, IppStatusCode::ClientErrorBadRequest, "Missing job-id"),
     };
@@ -731,6 +733,59 @@ fn is_text(head: &[u8]) -> bool {
     match std::str::from_utf8(head) {
         Ok(_) => true,
         Err(e) => e.error_len().is_none(),
+    }
+}
+
+/// Cancel-Job (RFC 8011 §4.3.3).
+///
+/// A job is only created once its whole document has arrived and been saved,
+/// so every job we know of is already completed: those can't be canceled and
+/// get client-error-not-possible, as the spec requires (the saved file is
+/// kept). Canceling a print that is still uploading happens on the client —
+/// it drops the connection and nothing is saved.
+fn handle_cancel_job(request: &IppRequest, printer: &Arc<PrinterState>) -> IppResponse {
+    let job_id = match requested_job_id(request) {
+        Some(id) => id,
+        None => return error_response(request.request_id, IppStatusCode::ClientErrorBadRequest, "Missing job-id"),
+    };
+
+    let mut job = match printer.active_jobs.get_mut(&job_id) {
+        Some(j) => j,
+        None => return error_response(request.request_id, IppStatusCode::ClientErrorNotFound, "Job not found"),
+    };
+
+    match job.state {
+        JobState::Completed | JobState::Canceled | JobState::Aborted => error_response(
+            request.request_id,
+            IppStatusCode::ClientErrorNotPossible,
+            &format!("Job {} has already finished and can't be canceled", job_id),
+        ),
+        JobState::Pending | JobState::Processing => {
+            job.state = JobState::Canceled;
+            tracing::info!("Canceled job {}", job_id);
+            let mut op = standard_operation_attrs(request.request_id);
+            op.add(IppAttribute::new(
+                "status-message",
+                IppValue::TextWithoutLanguage("successful-ok".to_string()),
+            ));
+            IppResponseBuilder::new(IppStatusCode::SuccessfulOk, request.request_id)
+                .add_group(op)
+                .build()
+        }
+    }
+}
+
+/// The job a request targets: `job-id` (with printer-uri), or the id at the
+/// end of `job-uri` (".../jobs/7"), the two forms RFC 8011 allows.
+fn requested_job_id(request: &IppRequest) -> Option<u32> {
+    let op = request.get_operation_attributes()?;
+    match op.get("job-id") {
+        Some(IppValue::Integer(i)) if *i > 0 => return Some(*i as u32),
+        _ => {}
+    }
+    match op.get("job-uri") {
+        Some(IppValue::Uri(uri)) => uri.rsplit_once("/jobs/")?.1.parse().ok(),
+        _ => None,
     }
 }
 
@@ -952,5 +1007,73 @@ mod tests {
         assert_eq!(sniff_format(b"UNIRAST\0"), "Apple raster (URF)");
         assert_eq!(sniff_format(b"Hello, world\n"), "plain text");
         assert_eq!(sniff_format(b"\x00\xFF\xFE\x80"), "an unknown format");
+    }
+
+    /// Print a small PDF and return its job id.
+    fn print_one(printer: &Arc<PrinterState>) -> i32 {
+        let raw = build_request(0x0002, 20, vec![
+            (0x45, "printer-uri", b"ipp://127.0.0.1:631/ipp/print"),
+            (0x49, "document-format", b"application/pdf"),
+        ], b"%PDF-1.4 cancel test");
+        let resp = parse_ipp_request(&dispatch(&parse_ipp_request(&raw).unwrap(), printer, &printer.printer_uri, None)).unwrap();
+        match resp.attribute_groups.iter()
+            .find(|g| g.delimiter == DelimiterTag::JobAttributes)
+            .and_then(|g| g.get("job-id")) {
+            Some(IppValue::Integer(id)) => *id,
+            other => panic!("no job-id: {:?}", other),
+        }
+    }
+
+    fn cancel(printer: &Arc<PrinterState>, attr: (u8, &str, &[u8])) -> u16 {
+        let raw = build_request(0x0008, 21, vec![
+            (0x45, "printer-uri", b"ipp://127.0.0.1:631/ipp/print"),
+            attr,
+        ], b"");
+        let resp = parse_ipp_request(&dispatch(&parse_ipp_request(&raw).unwrap(), printer, &printer.printer_uri, None)).unwrap();
+        u16::from(resp.operation_id)
+    }
+
+    #[test]
+    fn test_cancel_completed_job_is_not_possible() {
+        let dir = tempfile::tempdir().unwrap();
+        let printer = make_printer(dir.path());
+        let id = print_one(&printer);
+
+        assert_eq!(cancel(&printer, (0x21, "job-id", &id.to_be_bytes())), 0x0404);
+        let uri = format!("ipp://127.0.0.1:631/ipp/print/jobs/{}", id);
+        assert_eq!(cancel(&printer, (0x45, "job-uri", uri.as_bytes())), 0x0404);
+        // the saved document is kept
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn test_cancel_unknown_job_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let printer = make_printer(dir.path());
+        assert_eq!(cancel(&printer, (0x21, "job-id", &99i32.to_be_bytes())), 0x0406);
+    }
+
+    #[test]
+    fn test_cancel_pending_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let printer = make_printer(dir.path());
+        printer.active_jobs.insert(5, JobInfo {
+            id: 5, state: JobState::Processing, name: "x".into(), originating_user: "u".into(),
+            time_created: 0, file_path: None, size_bytes: 0,
+        });
+        assert_eq!(cancel(&printer, (0x21, "job-id", &5i32.to_be_bytes())), 0x0000);
+        assert_eq!(printer.active_jobs.get(&5).unwrap().state, JobState::Canceled);
+    }
+
+    #[test]
+    fn test_response_echoes_request_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let printer = make_printer(dir.path());
+        // build_request speaks IPP/1.1
+        let raw = build_request(0x000B, 30, vec![
+            (0x45, "printer-uri", b"ipp://127.0.0.1:631/ipp/print"),
+        ], b"");
+        let resp = parse_ipp_request(&dispatch(&parse_ipp_request(&raw).unwrap(), &printer, &printer.printer_uri, None)).unwrap();
+        assert_eq!(resp.version, IppVersion::IPP_1_1);
     }
 }

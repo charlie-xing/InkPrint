@@ -262,6 +262,12 @@ class MainActivity : ComponentActivity() {
                             Spacer(Modifier.height(4.dp))
                             Text(addr.label, fontSize = 12.sp, color = Color.Gray)
                             CopyableText(addr.printerUrl(port))
+                            if (addr.label == "VPN") {
+                                Text(
+                                    "Works only if this VPN lets its devices connect to each other.",
+                                    fontSize = 11.sp, color = Color.Gray
+                                )
+                            }
                         }
                     }
                 }

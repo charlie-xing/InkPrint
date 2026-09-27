@@ -14,11 +14,13 @@ data class PrinterAddress(val label: String, val ip: String) {
  *
  *  - `wlan*`                         → Wi-Fi
  *  - `tun*` in 100.64.0.0/10         → Tailscale (its CGNAT range)
- *  - other `tun*`, `ppp*`, `ipsec*`  → VPN
+ *  - other `tun*`, `ppp*`            → VPN
  *  - `eth*`                          → Ethernet
  *
  * Cellular (`rmnet*`, `ccmni*`, ...) and anything else is left out: it is not
- * reachable from other devices in practice.
+ * reachable from other devices in practice. So are `ipsec*` VPNs: on phones
+ * those are outbound privacy VPNs (e.g. Google's), which also hand out
+ * 100.64/10 addresses but never accept incoming connections.
  */
 object PrinterAddresses {
 
@@ -44,7 +46,7 @@ object PrinterAddresses {
         name.startsWith("wlan") -> "Wi-Fi"
         name.startsWith("eth") -> "Ethernet"
         name.startsWith("tun") && isTailscale(addr) -> "Tailscale"
-        name.startsWith("tun") || name.startsWith("ppp") || name.startsWith("ipsec") -> "VPN"
+        name.startsWith("tun") || name.startsWith("ppp") -> "VPN"
         else -> null
     }
 
