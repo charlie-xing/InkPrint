@@ -100,7 +100,7 @@ Privacy policy — [English](https://blog.xcl.name/InkPrint/privacy-policy.html)
 1. Install the APK on your BOOX (or other android device) device
 2. Open InkPrint and tap **Start Printer Service**
 3. Add the printer on your computer/phone (see below)
-4. Print — the PDF appears in the app's file list and in `Documents/InkPrint/` on the BOOX
+4. Print — the PDF appears in the app's file list and in `Documents/InkPrint/` (or your chosen save folder) on the BOOX
 
 ---
 
@@ -114,39 +114,15 @@ Privacy policy — [English](https://blog.xcl.name/InkPrint/privacy-policy.html)
 
 No driver download needed. Works on macOS Ventura, Sonoma, and Sequoia.
 
-**Alternative — force PDF via terminal (if AirPrint sends PostScript):**
+**Manual — Terminal (by IP, e.g. over Tailscale/VPN, where auto discovery doesn't work):**
 
 ```bash
-cat > /tmp/inkprint.ppd << 'EOF'
-*PPD-Adobe: "4.3"
-*FormatVersion: "4.3"
-*LanguageVersion: English
-*LanguageEncoding: ISOLatin1
-*Manufacturer: "InkPrint"
-*ModelName: "InkPrint"
-*NickName: "InkPrint PDF Printer"
-*PSVersion: "(3010.000) 0"
-*LanguageLevel: "3"
-*ColorDevice: False
-*DefaultColorSpace: Gray
-*cupsVersion: 2.2
-*cupsFilter2: "application/vnd.cups-pdf application/pdf 0 -"
-*DefaultPageSize: A4
-*PageSize A4/A4: "<</PageSize[595 842]>>setpagedevice"
-*PageSize Letter/Letter: "<</PageSize[612 792]>>setpagedevice"
-*DefaultPaperDimension: A4
-*PaperDimension A4/A4: "595 842"
-*PaperDimension Letter/Letter: "612 792"
-*DefaultImageableArea: A4
-*ImageableArea A4/A4: "0 0 595 842"
-*ImageableArea Letter/Letter: "0 0 612 792"
-EOF
-
-lpadmin -x InkPrint 2>/dev/null
 lpadmin -p InkPrint -E \
   -v ipp://<ANDROID_IP>:6310/ipp/print \
-  -P /tmp/inkprint.ppd
+  -m everywhere
 ```
+
+> Don't add it with "Generic PostScript Printer": that sends PostScript, and InkPrint only accepts PDF.
 
 ---
 
@@ -155,15 +131,21 @@ lpadmin -p InkPrint -E \
 **Automatic:**
 
 1. Settings → Bluetooth & devices → Printers & scanners
-2. Click **Add device** — InkPrint appears automatically (requires Bonjour service)
+2. Click **Add device** — InkPrint appears on the same network
 3. Click **Add device** to confirm
+
+If InkPrint doesn't show up, add it manually:
 
 **Manual (add by IP):**
 
 1. Settings → Printers & scanners → Add device
 2. "The printer that I want isn't listed" → Add a printer using an IP address or hostname
 3. Protocol: **IPP** / Hostname: `<ANDROID_IP>` / Port: `6310` / Queue: `ipp/print`
-4. Driver: Generic / Text Only
+4. Driver: **Microsoft IPP Class Driver**
+
+> Don't pick a "Generic / Text Only" or PostScript driver: those send text or PostScript instead of PDF, and InkPrint rejects the job.
+
+> The Windows setup hasn't been verified end-to-end yet. If jobs fail with "document format not supported", please [open an issue](https://github.com/charlie-xing/InkPrint/issues).
 
 ---
 
@@ -183,6 +165,8 @@ lp -d InkPrint /path/to/document.pdf
 ```
 
 Works on Ubuntu, Debian, Fedora, Arch, and any distro with CUPS.
+
+**GNOME / KDE GUI:** Settings → Printers → Add a Printer → enter `ipp://<ANDROID_IP>:6310/ipp/print` → driver **IPP Everywhere** (driverless). Don't pick a Generic, PostScript or vendor driver: those don't send PDF.
 
 ---
 
@@ -207,10 +191,29 @@ Works on Ubuntu, Debian, Fedora, Arch, and any distro with CUPS.
 
 **Manual:**
 
-1. In Default Print Service, tap Add printer
-2. Enter: `ipp://<ANDROID_IP>:6310/ipp/print`
+1. In Default Print Service, tap ⋮ → **Add printer** → **Add printer by IP address**
+2. Enter the address with the port: `<ANDROID_IP>:6310`
 
-**Third-party apps:** Print & Share, HP Smart, or Mopria Print Service all support IPP.
+---
+
+### Printing over Tailscale / VPN / another subnet
+
+Auto discovery uses mDNS (Bonjour), which only works inside one Wi-Fi network — Tailscale and most VPNs don't carry it. You can still print by adding the printer manually with the device's Tailscale/VPN IP (`100.x.y.z`) using the per-platform **Manual** steps above.
+
+The one thing to get right is the driver: InkPrint only stores PDF. Choose the driverless option (`-m everywhere` on macOS and Linux, **Microsoft IPP Class Driver** on Windows, `<IP>:6310` in Android's Default Print Service). Generic PostScript, text-only or vendor drivers send other formats; InkPrint rejects those jobs with "document format not supported" instead of saving a file that won't open.
+
+### Upgrading: re-add the printer
+
+Older versions advertised PWG raster and JPEG support without actually accepting them, so a printer added with an older version can still send those formats (on macOS, for example, printing a JPEG fails with "the printer cannot print the supplied content"). After upgrading, remove InkPrint from your computer's printer list and add it again.
+
+### Where the files are
+
+Tap **Choose** under *Printed Files* to pick a save folder (the picker opens at `Documents/InkPrint/`). Received PDFs are then moved straight into that folder, and the app lets you browse it: open subfolders, create folders, and share, rename, move or delete files — the same files your reader app sees.
+
+Until a folder is chosen, every received PDF is saved twice on the device:
+
+- `Documents/InkPrint/` — shared folder, visible to readers and file managers
+- `Android/data/com.inkprint.app/files/InkPrint/` — the app's own copy (moved into the save folder once you pick one)
 
 ---
 

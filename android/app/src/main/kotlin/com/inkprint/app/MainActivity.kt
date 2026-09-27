@@ -5,9 +5,12 @@ import android.content.*
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -25,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -32,6 +36,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import uniffi.inkprint.getLocalIp
 import java.io.File
 import java.text.SimpleDateFormat
@@ -39,7 +47,7 @@ import java.util.*
 
 class MainActivity : ComponentActivity() {
 
-    // Tick incremented on each print job — triggers file list refresh
+    // Tick incremented on each print job and on resume — triggers file list refresh
     private var jobTick by mutableStateOf(0)
 
     private val jobReceiver = object : BroadcastReceiver() {
@@ -50,12 +58,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Save folder picked by the user; null until one is chosen
+    private var treeUri by mutableStateOf<Uri?>(null)
+
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
 
+    private val folderPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            try {
+                SaveFolder.setTree(this, uri)
+            } catch (e: SecurityException) {
+                Toast.makeText(this, "Cannot use this folder: ${e.message}", Toast.LENGTH_LONG).show()
+                return@registerForActivityResult
+            }
+            lifecycleScope.launch {
+                withContext(Dispatchers.IO) { SaveFolder.adoptStagedJobs(this@MainActivity, uri) }
+                treeUri = uri
+                jobTick++
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         requestRuntimePermissions()
+        treeUri = SaveFolder.treeUri(this)
         registerReceiver(
             jobReceiver,
             IntentFilter(PrinterService.BROADCAST_JOB_RECEIVED),
@@ -68,6 +97,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /** Files may have changed in another app (e.g. deleted in the reader) while we were away. */
+    override fun onResume() {
+        super.onResume()
+        treeUri = SaveFolder.treeUri(this)
+        jobTick++
     }
 
     override fun onDestroy() {
@@ -111,10 +147,17 @@ class MainActivity : ComponentActivity() {
         if (wanted.isNotEmpty()) permissionLauncher.launch(wanted.toTypedArray())
     }
 
+    /**
+     * Checks every network, not just the default one: a Wi-Fi LAN without
+     * internet access (or with a VPN up) is still reachable by local clients,
+     * even though Android routes default traffic over cellular.
+     */
     private fun isWifiConnected(): Boolean {
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
-        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        @Suppress("DEPRECATION")
+        return cm.allNetworks.any {
+            cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        }
     }
 
     private fun getLocalIpAddress(): String =
@@ -125,18 +168,39 @@ class MainActivity : ComponentActivity() {
             .map { FileEntry(it.name, it.absolutePath, it.length(), it.lastModified()) }
 
     private fun openFile(filePath: String) {
+        val file = File(filePath)
+        openUri(
+            androidx.core.content.FileProvider.getUriForFile(this, "${packageName}.fileprovider", file),
+            JobStorage.mimeTypeOf(file)
+        )
+    }
+
+    private fun openUri(uri: Uri, mime: String) {
         try {
-            val file = File(filePath)
-            val uri = androidx.core.content.FileProvider.getUriForFile(
-                this, "${packageName}.fileprovider", file
-            )
-            val mime = JobStorage.mimeTypeOf(file)
             startActivity(Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, mime)
                 flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
             })
         } catch (e: Exception) {
             android.util.Log.e("MainActivity", "Cannot open file: ${e.message}")
+            Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun shareUri(uri: Uri, mime: String) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        }
+        startActivity(Intent.createChooser(send, null))
+    }
+
+    private fun pickSaveFolder() {
+        try {
+            folderPicker.launch(SaveFolder.INITIAL_URI)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "This device has no system folder picker", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -156,6 +220,7 @@ class MainActivity : ComponentActivity() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .safeDrawingPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -220,7 +285,22 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.height(16.dp))
 
             // File browser
-            FileBrowserCard(files = files, onOpen = { openFile(it) })
+            val tree = treeUri
+            if (tree != null) {
+                FolderBrowserCard(
+                    tree = tree,
+                    refreshTick = jobTick,
+                    onOpen = { openUri(it.uri, it.mimeType) },
+                    onShare = { shareUri(it.uri, it.mimeType) },
+                    onChangeFolder = { pickSaveFolder() }
+                )
+            } else {
+                FileBrowserCard(
+                    files = files,
+                    onOpen = { openFile(it) },
+                    onChooseFolder = { pickSaveFolder() }
+                )
+            }
 
             Spacer(Modifier.height(12.dp))
 
@@ -276,14 +356,18 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-data class FileEntry(val name: String, val path: String, val sizeBytes: Long, val modifiedMs: Long)
+data class FileEntry(val name: String, val path: String, val sizeBytes: Long, val modifiedMs: Long) {
+    /** "1790148775_4_Weekly_Notes.pdf" -> "Weekly Notes.pdf": drops the core's timestamp/job-id prefix. */
+    val displayName: String
+        get() = name.replace(Regex("^\\d+_\\d+_"), "").replace('_', ' ').ifBlank { name }
+}
 
 // ── File browser card ────────────────────────────────────────────────────────
 
-private const val PAGE_SIZE = 5
+internal const val PAGE_SIZE = 5
 
 @Composable
-fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit) {
+fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit, onChooseFolder: () -> Unit) {
     val dateFmt = remember { SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()) }
     var currentPage by remember { mutableStateOf(0) }
 
@@ -308,6 +392,25 @@ fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit) {
                 Text("${files.size}", color = Color.Gray, fontSize = 13.sp)
             }
 
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFFE8F0FE))
+                    .clickable { onChooseFolder() }
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Choose a save folder to organize files into folders, rename, move and delete them",
+                    fontSize = 12.sp,
+                    color = Color(0xFF1565C0),
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Choose", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1565C0))
+            }
             Spacer(Modifier.height(8.dp))
 
             if (files.isEmpty()) {
@@ -333,10 +436,10 @@ fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit) {
                             Spacer(Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    file.name,
+                                    file.displayName,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Medium,
-                                    maxLines = 1,
+                                    maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
@@ -382,13 +485,13 @@ fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit) {
     }
 }
 
-private fun fileIcon(name: String) = when (name.substringAfterLast('.').lowercase()) {
+internal fun fileIcon(name: String) = when (name.substringAfterLast('.').lowercase()) {
     "pdf" -> "\uD83D\uDCC4"
     "ps"  -> "\uD83D\uDDA8"
     else  -> "\uD83D\uDCC1"
 }
 
-private fun formatSize(bytes: Long): String = when {
+internal fun formatSize(bytes: Long): String = when {
     bytes < 1024            -> "$bytes B"
     bytes < 1024 * 1024     -> "${bytes / 1024} KB"
     else                    -> "${bytes / (1024 * 1024)} MB"
@@ -423,6 +526,11 @@ fun AddPrinterInstructionsCard(ip: String, port: String) {
                     modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    Text(
+                        "Auto-discovery only works on the same WiFi. Over Tailscale / VPN, use the manual steps with this device's VPN IP. " +
+                        "Always choose the driverless option (AirPrint, IPP Everywhere, IPP Class Driver) — InkPrint only accepts PDF.",
+                        fontSize = 12.sp, color = Color.Gray
+                    )
                     OsSection("macOS")   { MacOsInstructions(ip, port) }
                     OsSection("Windows") { WindowsInstructions(ip, port) }
                     OsSection("Linux")   { LinuxInstructions(ip, port) }
@@ -470,7 +578,6 @@ fun OsSection(title: String, content: @Composable () -> Unit) {
 fun MacOsInstructions(ip: String, port: String) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 
-        // Method 1 — AirPrint GUI
         InfoBadge("✅ Recommended — Auto-discovery (AirPrint)")
         Text(
             "Make sure InkPrint service is running and your Mac is on the same WiFi network.",
@@ -480,52 +587,19 @@ fun MacOsInstructions(ip: String, port: String) {
         Step(2, "Click Add Printer, Scanner or Fax…")
         Step(3, "InkPrint appears in the list — select it")
         Step(4, "Use: AirPrint is selected automatically → click Add")
-        Text(
-            "No driver download needed. macOS uses the built-in AirPrint driver.",
-            fontSize = 12.sp, color = Color(0xFF388E3C)
-        )
 
         HorizontalDivider()
 
-        // Method 2 — Terminal (force PDF)
-        InfoBadge("🖥️ Alternative — Terminal (force PDF output)")
-        Text(
-            "Use this if AirPrint sends PostScript instead of PDF on your system.",
-            fontSize = 12.sp, color = Color.Gray
-        )
+        InfoBadge("🖥️ Manual — Terminal (by IP, e.g. over Tailscale/VPN)")
         CodeBlock(
-            "# Create a PPD that forces PDF output\n" +
-            "cat > /tmp/inkprint.ppd << 'EOF'\n" +
-            "*PPD-Adobe: \"4.3\"\n" +
-            "*FormatVersion: \"4.3\"\n" +
-            "*LanguageVersion: English\n" +
-            "*LanguageEncoding: ISOLatin1\n" +
-            "*Manufacturer: \"InkPrint\"\n" +
-            "*ModelName: \"InkPrint\"\n" +
-            "*NickName: \"InkPrint PDF Printer\"\n" +
-            "*PSVersion: \"(3010.000) 0\"\n" +
-            "*LanguageLevel: \"3\"\n" +
-            "*ColorDevice: False\n" +
-            "*DefaultColorSpace: Gray\n" +
-            "*cupsVersion: 2.2\n" +
-            "*cupsFilter2: \"application/vnd.cups-pdf application/pdf 0 -\"\n" +
-            "*DefaultPageSize: A4\n" +
-            "*PageSize A4/A4: \"<</PageSize[595 842]>>setpagedevice\"\n" +
-            "*PageSize Letter/Letter: \"<</PageSize[612 792]>>setpagedevice\"\n" +
-            "*DefaultPaperDimension: A4\n" +
-            "*PaperDimension A4/A4: \"595 842\"\n" +
-            "*PaperDimension Letter/Letter: \"612 792\"\n" +
-            "*DefaultImageableArea: A4\n" +
-            "*ImageableArea A4/A4: \"0 0 595 842\"\n" +
-            "*ImageableArea Letter/Letter: \"0 0 612 792\"\n" +
-            "EOF\n\n" +
-            "lpadmin -x InkPrint 2>/dev/null\n" +
             "lpadmin -p InkPrint -E \\\n" +
             "  -v ipp://$ip:$port/ipp/print \\\n" +
-            "  -P /tmp/inkprint.ppd"
+            "  -m everywhere"
         )
-        Text("Verify with:", fontSize = 12.sp, color = Color.Gray)
-        CodeBlock("lpstat -p InkPrint")
+        Text(
+            "Don't add it with \"Generic PostScript Printer\": that sends PostScript, and InkPrint only accepts PDF.",
+            fontSize = 12.sp, color = Color(0xFFBF360C)
+        )
     }
 }
 
@@ -533,12 +607,12 @@ fun MacOsInstructions(ip: String, port: String) {
 fun WindowsInstructions(ip: String, port: String) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 
-        InfoBadge("✅ Automatic — Bonjour/IPP discovery")
+        InfoBadge("✅ Automatic")
         Step(1, "Settings → Bluetooth & devices → Printers & scanners")
-        Step(2, "Click Add device — InkPrint appears automatically on the same network")
+        Step(2, "Click Add device — InkPrint appears on the same network")
         Step(3, "Click Add device to confirm")
         Text(
-            "Windows 10/11 discovers IPP printers automatically via Bonjour (requires Bonjour service running, typically installed with iTunes or Apple devices).",
+            "If InkPrint doesn't show up, add it by IP address below.",
             fontSize = 12.sp, color = Color.Gray
         )
 
@@ -551,10 +625,10 @@ fun WindowsInstructions(ip: String, port: String) {
         Step(4, "Protocol: IPP  /  Hostname or IP address:")
         CodeBlock("$ip")
         Step(5, "Port number: $port  /  Queue: ipp/print")
-        Step(6, "Driver: Generic / Text Only — then click Next to finish")
+        Step(6, "Driver: Microsoft IPP Class Driver — then click Next to finish")
         Text(
-            "Printed files are saved as PDF on the BOOX device in Documents/InkPrint/.",
-            fontSize = 12.sp, color = Color(0xFF388E3C)
+            "Don't pick Generic / Text Only or a PostScript driver: they don't send PDF, and the job is rejected.",
+            fontSize = 12.sp, color = Color(0xFFBF360C)
         )
     }
 }
@@ -582,7 +656,11 @@ fun LinuxInstructions(ip: String, port: String) {
         Step(1, "Settings → Printers → Add a Printer")
         Step(2, "Enter the IPP address manually:")
         CodeBlock("ipp://$ip:$port/ipp/print")
-        Step(3, "Select IPP Everywhere or Generic driver → Apply")
+        Step(3, "Driver: IPP Everywhere (driverless) → Apply")
+        Text(
+            "Don't pick a Generic, PostScript or vendor driver: those don't send PDF.",
+            fontSize = 12.sp, color = Color(0xFFBF360C)
+        )
     }
 }
 
@@ -600,11 +678,7 @@ fun IosInstructions() {
         Step(3, "Open any app (Safari, Files, Mail, Photos…)")
         Step(4, "Tap the Share button  →  Print")
         Step(5, "Tap Select Printer — InkPrint appears automatically")
-        Step(6, "Tap Print — the file is saved to BOOX's Documents/InkPrint/")
-        Text(
-            "Supported file types: PDF, images, web pages, documents.",
-            fontSize = 12.sp, color = Color(0xFF388E3C)
-        )
+        Step(6, "Tap Print — the file is saved on the BOOX as PDF")
 
         HorizontalDivider()
 
@@ -630,18 +704,11 @@ fun AndroidInstructions(ip: String, port: String) {
 
         HorizontalDivider()
 
-        InfoBadge("🖨️ Manual IPP address")
+        InfoBadge("🖨️ Manual — Add by IP address")
         Text("If auto-discovery doesn't find InkPrint:", fontSize = 12.sp, color = Color.Gray)
-        Step(1, "In Default Print Service, tap Add printer")
-        Step(2, "Enter the printer address:")
-        CodeBlock("ipp://$ip:$port/ipp/print")
-
-        HorizontalDivider()
-
-        InfoBadge("📱 Third-party apps")
-        Step(1, "Install \"Print & Share\", \"HP Smart\", or \"Mopria Print Service\" from Google Play")
-        Step(2, "Add a network printer with address:")
-        CodeBlock("ipp://$ip:$port/ipp/print")
+        Step(1, "In Default Print Service, tap ⋮ → Add printer")
+        Step(2, "Add printer by IP address, and enter (with the port):")
+        CodeBlock("$ip:$port")
     }
 }
 

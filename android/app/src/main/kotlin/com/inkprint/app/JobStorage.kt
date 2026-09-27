@@ -17,11 +17,15 @@ import java.io.File
  * jobs always land in the app-specific external directory — no storage
  * permission is involved and it works on every supported API level.
  *
- * To keep the PDFs reachable from the device's own reader app, each finished
- * job is then published into the shared `Documents/InkPrint/` collection:
- * via MediaStore on API 29+, and with a direct copy (guarded by the legacy
- * write permission) on API 28 and below. Publishing is best-effort — a failure
- * there never loses the job, which stays in the app directory either way.
+ * Once the user has picked a save folder ([SaveFolder]), each finished job is
+ * moved there and the app directory is only a staging area.
+ *
+ * Until then, to keep the PDFs reachable from the device's own reader app,
+ * each finished job is published into the shared `Documents/InkPrint/`
+ * collection: via MediaStore on API 29+, and with a direct copy (guarded by
+ * the legacy write permission) on API 28 and below. Publishing is best-effort
+ * — a failure there never loses the job, which stays in the app directory
+ * either way.
  */
 object JobStorage {
 
@@ -39,6 +43,25 @@ object JobStorage {
             ?.filter { it.isFile }
             ?.sortedByDescending { it.lastModified() }
             ?: emptyList()
+
+    /**
+     * Hand a finished job over to where the user keeps their files. Returns a
+     * Uri readers can open: the job's document in the save folder, or null when
+     * the job stays in the app directory (no folder set, or moving it failed).
+     */
+    fun deliver(context: Context, file: File): Uri? {
+        val tree = SaveFolder.treeUri(context)
+        if (tree == null) {
+            publishToDocuments(context, file)
+            return null
+        }
+        return try {
+            SaveFolder.importFile(context, tree, file)?.also { file.delete() }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not move ${file.name} into the save folder: ${e.message}")
+            null
+        }
+    }
 
     /**
      * Copy [file] into the shared Documents/InkPrint/ collection so other apps

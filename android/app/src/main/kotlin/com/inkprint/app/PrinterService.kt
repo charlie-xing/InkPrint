@@ -120,7 +120,7 @@ class PrinterService : Service() {
             serviceType = "_universal._sub._ipp._tcp"
             port = DEFAULT_PORT.toInt()
             setAttribute("txtvers",  "1")
-            setAttribute("pdl",      "application/pdf,image/urf,image/pwg-raster,image/jpeg")
+            setAttribute("pdl",      "application/pdf,image/urf")  // keep in sync with SUPPORTED_DOCUMENT_FORMATS in the core
             setAttribute("rp",       "ipp/print")
             setAttribute("ty",       "InkPrint Virtual Printer")
             setAttribute("adminurl", "http://$ip:${DEFAULT_PORT.toInt()}/")
@@ -191,17 +191,17 @@ class PrinterService : Service() {
 
         val jobFile = java.io.File(filePath)
 
-        // Mirror the job into shared Documents/InkPrint/ so the device's reader
-        // app can find it. Best-effort: the job is already safe in jobDir().
-        val publishedUri = JobStorage.publishToDocuments(this, jobFile)
-        if (publishedUri != null) {
-            Log.i(TAG, "Published $fileName to shared storage: $publishedUri")
+        // Move the job into the user's save folder (or, without one, mirror it
+        // into shared Documents/InkPrint/) so the device's reader app finds it.
+        val savedUri = JobStorage.deliver(this, jobFile)
+        if (savedUri != null) {
+            Log.i(TAG, "Saved $fileName to the save folder: $savedUri")
         }
 
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         val openIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(
-                androidx.core.content.FileProvider.getUriForFile(
+                savedUri ?: androidx.core.content.FileProvider.getUriForFile(
                     this@PrinterService, "${packageName}.fileprovider", jobFile
                 ),
                 JobStorage.mimeTypeOf(jobFile)
