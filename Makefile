@@ -2,7 +2,7 @@
 
 NDK_HOME ?= /opt/homebrew/share/android-ndk
 RUSTC ?= $(HOME)/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustc
-JAVA_HOME ?= /opt/homebrew/opt/openjdk@17
+JAVA_HOME = /opt/homebrew/opt/openjdk@17
 ANDROID_HOME ?= $(HOME)/Library/Android/sdk
 ANDROID_DIR = android
 
@@ -18,7 +18,7 @@ rust-build-android:
 
 # Generate UniFFI Kotlin bindings
 uniffi-bindings:
-	cargo run -p uniffi_bindgen -- generate \
+	cargo run -p uniffi-bindgen -- generate \
 		inkprint-core/src/inkprint.udl \
 		--language kotlin \
 		--out-dir $(ANDROID_DIR)/app/src/main/kotlin/com/inkprint/uniffi
