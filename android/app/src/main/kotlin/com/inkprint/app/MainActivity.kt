@@ -3,8 +3,6 @@ package com.inkprint.app
 import android.Manifest
 import android.content.*
 import android.content.pm.PackageManager
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -40,7 +38,6 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import uniffi.inkprint.getLocalIp
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -147,22 +144,6 @@ class MainActivity : ComponentActivity() {
         if (wanted.isNotEmpty()) permissionLauncher.launch(wanted.toTypedArray())
     }
 
-    /**
-     * Checks every network, not just the default one: a Wi-Fi LAN without
-     * internet access (or with a VPN up) is still reachable by local clients,
-     * even though Android routes default traffic over cellular.
-     */
-    private fun isWifiConnected(): Boolean {
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        @Suppress("DEPRECATION")
-        return cm.allNetworks.any {
-            cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-        }
-    }
-
-    private fun getLocalIpAddress(): String =
-        try { getLocalIp() } catch (_: Exception) { "unknown" }
-
     private fun getStoredFiles(): List<FileEntry> =
         JobStorage.listJobs(this)
             .map { FileEntry(it.name, it.absolutePath, it.length(), it.lastModified()) }
@@ -209,11 +190,10 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun InkPrintScreen() {
         var isRunning by remember { mutableStateOf(false) }
-        val ip            = remember { getLocalIpAddress() }
-        val port          = PrinterService.DEFAULT_PORT
-        val wifiOk        = remember { isWifiConnected() }
-        val noNetwork     = !wifiOk || ip == "127.0.0.1" || ip == "unknown"
-        val printerUrl    = "ipp://$ip:$port/ipp/print"
+        val port          = PrinterService.DEFAULT_PORT.toInt()
+        // Re-read on resume: Wi-Fi or Tailscale may have come up or changed address
+        val addresses     = remember(jobTick) { PrinterAddresses.list() }
+        val onWifi        = addresses.any { it.label == "Wi-Fi" || it.label == "Ethernet" }
 
         val files = remember(jobTick) { getStoredFiles() }
 
@@ -230,8 +210,8 @@ class MainActivity : ComponentActivity() {
             Text("IPP Virtual Printer", color = Color.Gray, fontSize = 14.sp)
             Spacer(Modifier.height(14.dp))
 
-            // WiFi warning
-            if (noNetwork) {
+            // Network warning: nothing reachable, or reachable over VPN only
+            if (!onWifi) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
@@ -240,7 +220,10 @@ class MainActivity : ComponentActivity() {
                         Text("⚠️", fontSize = 16.sp)
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            "WiFi not connected — devices on the LAN cannot reach this printer. Please connect to WiFi first.",
+                            if (addresses.isEmpty())
+                                "WiFi not connected — devices on the LAN cannot reach this printer. Please connect to WiFi (or a VPN such as Tailscale) first."
+                            else
+                                "WiFi not connected — only devices on ${addresses.joinToString(" / ") { it.label }} can reach this printer, and auto-discovery is unavailable.",
                             fontSize = 13.sp, color = Color(0xFFBF360C)
                         )
                     }
@@ -274,10 +257,12 @@ class MainActivity : ComponentActivity() {
                             color = if (isRunning) Color(0xFF388E3C) else Color.Gray
                         )
                     }
-                    if (isRunning && !noNetwork) {
-                        Text("$ip : $port", fontSize = 13.sp, color = Color.Gray)
-                        Spacer(Modifier.height(2.dp))
-                        CopyableText(printerUrl)
+                    if (isRunning) {
+                        addresses.forEach { addr ->
+                            Spacer(Modifier.height(4.dp))
+                            Text(addr.label, fontSize = 12.sp, color = Color.Gray)
+                            CopyableText(addr.printerUrl(port))
+                        }
                     }
                 }
             }
@@ -305,7 +290,7 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.height(12.dp))
 
             // Collapsible help
-            AddPrinterInstructionsCard(ip = ip, port = port.toString())
+            AddPrinterInstructionsCard(addresses = addresses, port = port.toString())
 
             Spacer(Modifier.height(16.dp))
 
@@ -500,8 +485,12 @@ internal fun formatSize(bytes: Long): String = when {
 // ── Collapsible instructions card ────────────────────────────────────────────
 
 @Composable
-fun AddPrinterInstructionsCard(ip: String, port: String) {
+fun AddPrinterInstructionsCard(addresses: List<PrinterAddress>, port: String) {
     var expanded by remember { mutableStateOf(false) }
+    // Which network the steps are written for; defaults to the first (Wi-Fi when present)
+    var selectedLabel by remember { mutableStateOf<String?>(null) }
+    val selected = addresses.firstOrNull { it.label == selectedLabel } ?: addresses.firstOrNull()
+    val ip = selected?.ip ?: "<device IP>"
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column {
@@ -531,6 +520,18 @@ fun AddPrinterInstructionsCard(ip: String, port: String) {
                         "Always choose the driverless option (AirPrint, IPP Everywhere, IPP Class Driver) — InkPrint only accepts PDF.",
                         fontSize = 12.sp, color = Color.Gray
                     )
+                    if (addresses.size > 1) {
+                        Text("Show the steps for:", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            addresses.forEach { addr ->
+                                FilterChip(
+                                    selected = addr == selected,
+                                    onClick = { selectedLabel = addr.label },
+                                    label = { Text("${addr.label}  ${addr.ip}", fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                    }
                     OsSection("macOS")   { MacOsInstructions(ip, port) }
                     OsSection("Windows") { WindowsInstructions(ip, port) }
                     OsSection("Linux")   { LinuxInstructions(ip, port) }

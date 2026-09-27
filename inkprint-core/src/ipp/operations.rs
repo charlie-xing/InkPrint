@@ -10,20 +10,25 @@ pub trait PrintJobCallback: Send + Sync {
     fn on_job_received(&self, job_id: u32, file_path: String, file_name: String, size_bytes: u64);
 }
 
+/// Handle one IPP request. `printer_uri` is the printer's URI as this client
+/// reached it (see `server::http::printer_uri_for`); it is echoed back in
+/// printer-uri-supported, job-uri, etc. so every URI a client is handed
+/// works over the same network path it came in on (Wi-Fi, Tailscale, ...).
 pub fn dispatch(
     request: &IppRequest,
     printer: &Arc<PrinterState>,
+    printer_uri: &str,
     callback: Option<&dyn PrintJobCallback>,
 ) -> Vec<u8> {
     let response = match request.operation_id {
         IppOperationId::GetPrinterAttributes => {
-            handle_get_printer_attributes(request, printer)
+            handle_get_printer_attributes(request, printer, printer_uri)
         }
         IppOperationId::PrintJob => {
-            handle_print_job(request, printer, callback)
+            handle_print_job(request, printer, printer_uri, callback)
         }
         IppOperationId::GetJobAttributes => {
-            handle_get_job_attributes(request, printer)
+            handle_get_job_attributes(request, printer, printer_uri)
         }
         IppOperationId::ValidateJob => {
             handle_validate_job(request)
@@ -53,6 +58,7 @@ pub const SUPPORTED_DOCUMENT_FORMATS: &[&str] = &["application/pdf", "image/urf"
 fn handle_get_printer_attributes(
     request: &IppRequest,
     printer: &Arc<PrinterState>,
+    printer_uri: &str,
 ) -> IppResponse {
     // Determine which attributes were requested
     let requested: Option<Vec<String>> = request.get_operation_attributes()
@@ -82,7 +88,7 @@ fn handle_get_printer_attributes(
     if want("printer-uri-supported") {
         printer_group.add(IppAttribute::new(
             "printer-uri-supported",
-            IppValue::Uri(printer.printer_uri.clone()),
+            IppValue::Uri(printer_uri.to_string()),
         ));
     }
     if want("uri-security-supported") {
@@ -334,7 +340,7 @@ fn handle_get_printer_attributes(
         ));
     }
     if want("printer-more-info") {
-        let host_port = printer.printer_uri
+        let host_port = printer_uri
             .trim_start_matches("ipp://")
             .split('/')
             .next()
@@ -425,6 +431,7 @@ fn handle_get_printer_attributes(
 fn handle_print_job(
     request: &IppRequest,
     printer: &Arc<PrinterState>,
+    printer_uri: &str,
     callback: Option<&dyn PrintJobCallback>,
 ) -> IppResponse {
     let op_attrs = match request.get_operation_attributes() {
@@ -557,7 +564,7 @@ fn handle_print_job(
     job_group.add(IppAttribute::new("job-id", IppValue::Integer(job_id as i32)));
     job_group.add(IppAttribute::new(
         "job-uri",
-        IppValue::Uri(format!("{}/jobs/{}", printer.printer_uri, job_id)),
+        IppValue::Uri(format!("{}/jobs/{}", printer_uri, job_id)),
     ));
     job_group.add(IppAttribute::new("job-state", IppValue::Enum(JobState::Completed as i32)));
     job_group.add(IppAttribute::new(
@@ -574,6 +581,7 @@ fn handle_print_job(
 fn handle_get_job_attributes(
     request: &IppRequest,
     printer: &Arc<PrinterState>,
+    printer_uri: &str,
 ) -> IppResponse {
     let job_id = request.get_operation_attributes()
         .and_then(|g| g.get("job-id"))
@@ -599,7 +607,7 @@ fn handle_get_job_attributes(
     job_group.add(IppAttribute::new("job-id", IppValue::Integer(job.id as i32)));
     job_group.add(IppAttribute::new(
         "job-uri",
-        IppValue::Uri(format!("{}/jobs/{}", printer.printer_uri, job.id)),
+        IppValue::Uri(format!("{}/jobs/{}", printer_uri, job.id)),
     ));
     job_group.add(IppAttribute::new("job-state", IppValue::Enum(job.state.clone() as i32)));
     job_group.add(IppAttribute::new(
@@ -788,7 +796,7 @@ mod tests {
             (0x45, "printer-uri", b"ipp://127.0.0.1:631/ipp/print"),
         ], b"");
         let req = parse_ipp_request(&raw).unwrap();
-        let resp_bytes = dispatch(&req, &printer, None);
+        let resp_bytes = dispatch(&req, &printer, &printer.printer_uri, None);
         let resp = parse_ipp_request(&resp_bytes).unwrap();
 
         // Status OK
@@ -813,7 +821,7 @@ mod tests {
             (0x44, "requested-attributes", b"printer-name"),
         ], b"");
         let req = parse_ipp_request(&raw).unwrap();
-        let resp_bytes = dispatch(&req, &printer, None);
+        let resp_bytes = dispatch(&req, &printer, &printer.printer_uri, None);
         let resp = parse_ipp_request(&resp_bytes).unwrap();
 
         let printer_group = resp.attribute_groups.iter()
@@ -840,7 +848,7 @@ mod tests {
         ], pdf_data);
 
         let req = parse_ipp_request(&raw).unwrap();
-        let resp_bytes = dispatch(&req, &printer, None);
+        let resp_bytes = dispatch(&req, &printer, &printer.printer_uri, None);
         let resp = parse_ipp_request(&resp_bytes).unwrap();
 
         // Status OK
@@ -873,7 +881,7 @@ mod tests {
             (0x49, "document-format", b"application/pdf"),
         ], pdf_data);
         let req = parse_ipp_request(&raw).unwrap();
-        let resp_bytes = dispatch(&req, &printer, None);
+        let resp_bytes = dispatch(&req, &printer, &printer.printer_uri, None);
         let resp = parse_ipp_request(&resp_bytes).unwrap();
         let job_id_val = resp.attribute_groups.iter()
             .find(|g| g.delimiter == DelimiterTag::JobAttributes)
@@ -889,7 +897,7 @@ mod tests {
             (0x21, "job-id", &job_id_bytes),
         ], b"");
         let req2 = parse_ipp_request(&raw2).unwrap();
-        let resp2_bytes = dispatch(&req2, &printer, None);
+        let resp2_bytes = dispatch(&req2, &printer, &printer.printer_uri, None);
         let resp2 = parse_ipp_request(&resp2_bytes).unwrap();
 
         assert_eq!(u16::from(resp2.operation_id), 0x0000u16);
@@ -913,7 +921,7 @@ mod tests {
         ], b"%!PS-Adobe-3.0\n%%Pages: 1\n");
 
         let req = parse_ipp_request(&raw).unwrap();
-        let resp = parse_ipp_request(&dispatch(&req, &printer, None)).unwrap();
+        let resp = parse_ipp_request(&dispatch(&req, &printer, &printer.printer_uri, None)).unwrap();
 
         assert_eq!(u16::from(resp.operation_id), 0x040Au16);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -931,7 +939,7 @@ mod tests {
         ], b"\xEF\xBB\xBF%PDF-1.7 body");
 
         let req = parse_ipp_request(&raw).unwrap();
-        let resp = parse_ipp_request(&dispatch(&req, &printer, None)).unwrap();
+        let resp = parse_ipp_request(&dispatch(&req, &printer, &printer.printer_uri, None)).unwrap();
 
         assert_eq!(u16::from(resp.operation_id), 0x0000u16);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);

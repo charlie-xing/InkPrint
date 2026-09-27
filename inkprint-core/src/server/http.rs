@@ -26,10 +26,15 @@ impl HttpServer {
     async fn handle_request(
         printer: Arc<PrinterState>,
         callback: Option<Arc<dyn PrintJobCallback>>,
+        local_addr: SocketAddr,
         req: Request<Incoming>,
     ) -> Result<Response<Full<Bytes>>, hyper::Error> {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
+        let printer_uri = printer_uri_for(
+            req.headers().get(hyper::header::HOST).and_then(|v| v.to_str().ok()),
+            local_addr,
+        );
 
         // Only accept POST /ipp/print
         if method != Method::POST || (path != "/ipp/print" && path != "/") {
@@ -98,7 +103,7 @@ impl HttpServer {
 
         // Dispatch IPP operation
         let cb_ref: Option<&dyn PrintJobCallback> = callback.as_deref();
-        let response_bytes = dispatch(&ipp_request, &printer, cb_ref);
+        let response_bytes = dispatch(&ipp_request, &printer, &printer_uri, cb_ref);
 
         Ok(Response::builder()
             .status(StatusCode::OK)
@@ -149,6 +154,15 @@ impl HttpServer {
                     };
 
                     tracing::debug!("Connection from {}", peer_addr);
+                    // The address the client connected to — Wi-Fi, Tailscale, ... —
+                    // used for the printer URI when the request has no usable Host.
+                    let local_addr = match stream.local_addr() {
+                        Ok(a) => a,
+                        Err(e) => {
+                            tracing::error!("No local address for {}: {}", peer_addr, e);
+                            continue;
+                        }
+                    };
                     let io = TokioIo::new(stream);
                     let printer = self.printer.clone();
                     let callback = self.callback.clone();
@@ -158,7 +172,7 @@ impl HttpServer {
                             let printer = printer.clone();
                             let callback = callback.clone();
                             async move {
-                                HttpServer::handle_request(printer, callback, req).await
+                                HttpServer::handle_request(printer, callback, local_addr, req).await
                             }
                         });
 
@@ -174,5 +188,58 @@ impl HttpServer {
         }
 
         Ok(())
+    }
+}
+
+/// The printer URI as the client addressed it: taken from the `Host` header
+/// (so an IP, a Tailscale MagicDNS name or `.local` name all round-trip),
+/// else from the local address the connection arrived on. A Host without a
+/// port gets the port we are actually listening on.
+pub fn printer_uri_for(host: Option<&str>, local: SocketAddr) -> String {
+    let authority = host
+        .map(str::trim)
+        .filter(|h| is_valid_authority(h))
+        .map(|h| if has_port(h) { h.to_string() } else { format!("{}:{}", h, local.port()) })
+        .unwrap_or_else(|| local.to_string());
+    format!("ipp://{}/ipp/print", authority)
+}
+
+/// `host[:port]` or `[v6]:port` with nothing that could break out of a URI.
+fn is_valid_authority(h: &str) -> bool {
+    !h.is_empty()
+        && h.len() <= 255
+        && h.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'))
+}
+
+fn has_port(h: &str) -> bool {
+    match h.rfind(']') {
+        Some(end) => h[end..].contains(':'),   // [v6]:port
+        None => h.contains(':'),               // host:port
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn local() -> SocketAddr { "192.168.2.5:6310".parse().unwrap() }
+
+    #[test]
+    fn printer_uri_follows_host_header() {
+        assert_eq!(printer_uri_for(Some("100.70.177.81:6310"), local()), "ipp://100.70.177.81:6310/ipp/print");
+        assert_eq!(printer_uri_for(Some("xp.tail33a0b2.ts.net:6310"), local()), "ipp://xp.tail33a0b2.ts.net:6310/ipp/print");
+        assert_eq!(printer_uri_for(Some("[fd7a::1]:6310"), local()), "ipp://[fd7a::1]:6310/ipp/print");
+    }
+
+    #[test]
+    fn printer_uri_adds_missing_port() {
+        assert_eq!(printer_uri_for(Some("inkprint.local"), local()), "ipp://inkprint.local:6310/ipp/print");
+    }
+
+    #[test]
+    fn printer_uri_falls_back_to_local_address() {
+        assert_eq!(printer_uri_for(None, local()), "ipp://192.168.2.5:6310/ipp/print");
+        assert_eq!(printer_uri_for(Some(""), local()), "ipp://192.168.2.5:6310/ipp/print");
+        assert_eq!(printer_uri_for(Some("evil/path?x"), local()), "ipp://192.168.2.5:6310/ipp/print");
     }
 }

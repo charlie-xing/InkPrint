@@ -71,15 +71,11 @@ macOS / Windows / Linux / iOS / Android
 # 1. Build Rust .so for Android arm64
 make rust-build-android
 
-# 2. Copy .so (UniFFI loads by namespace name)
-cp android/app/src/main/jniLibs/arm64-v8a/libinkprint_core.so \
-   android/app/src/main/jniLibs/arm64-v8a/libuniffi_inkprint.so
-
-# 3. Build APK
+# 2. Build APK
 cd android
 JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew assembleDebug
 
-# 4. Install on device
+# 3. Install on device
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -220,7 +216,7 @@ Works on Ubuntu, Debian, Fedora, Arch, and any distro with CUPS.
 
 ### Printing over Tailscale / VPN / another subnet
 
-Auto discovery uses mDNS (Bonjour), which only works inside one Wi-Fi network — Tailscale and most VPNs don't carry it. You can still print by adding the printer manually with the device's Tailscale/VPN IP (`100.x.y.z`) using the per-platform **Manual** steps above.
+Auto discovery uses mDNS (Bonjour), which only works inside one Wi-Fi network — Tailscale and most VPNs don't carry it. You can still print by adding the printer manually with the device's Tailscale/VPN IP (`100.x.y.z`) using the per-platform **Manual** steps above. While the service runs, the app lists every address it can be reached at (Wi-Fi, Tailscale, VPN) with a copyable printer URL, and *How to add this printer* can show its steps for any of them.
 
 The one thing to get right is the driver: InkPrint only stores PDF. Choose the driverless option (`-m everywhere` on macOS and Linux, **Microsoft IPP Class Driver** on Windows, `<IP>:6310` in Android's Default Print Service). Generic PostScript, text-only or vendor drivers send other formats; InkPrint rejects those jobs with "document format not supported" instead of saving a file that won't open.
 
