@@ -37,16 +37,25 @@ impl ServerHandle {
 }
 
 /// Get the local LAN IP address (first non-loopback IPv4)
+/// Picks the address LAN clients should use. Phones often carry several
+/// interfaces at once (Wi-Fi, cellular, VPN, hotspot), so prefer Wi-Fi
+/// (`wlan*`), then any private LAN address, then anything non-loopback.
 pub fn get_local_ip() -> Ipv4Addr {
-    if let Ok(addrs) = if_addrs::get_if_addrs() {
-        for addr in addrs {
-            if addr.is_loopback() { continue; }
-            if let IpAddr::V4(v4) = addr.addr.ip() {
-                return v4;
-            }
-        }
-    }
-    Ipv4Addr::new(127, 0, 0, 1)
+    let v4s: Vec<(String, Ipv4Addr)> = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|a| !a.is_loopback())
+        .filter_map(|a| match a.addr.ip() {
+            IpAddr::V4(v4) => Some((a.name, v4)),
+            _ => None,
+        })
+        .collect();
+    v4s.iter()
+        .find(|(name, v4)| name.starts_with("wlan") && v4.is_private())
+        .or_else(|| v4s.iter().find(|(_, v4)| v4.is_private()))
+        .or_else(|| v4s.first())
+        .map(|(_, v4)| *v4)
+        .unwrap_or(Ipv4Addr::new(127, 0, 0, 1))
 }
 
 pub async fn start(config: ServerConfig) -> Result<ServerHandle, Box<dyn std::error::Error + Send + Sync>> {
