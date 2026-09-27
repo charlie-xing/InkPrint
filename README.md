@@ -9,6 +9,28 @@ Documents printed from any device on your LAN are saved as PDF directly to the B
 
 ---
 
+## The story behind InkPrint
+
+InkPrint was inspired by my daughter, Kiki.
+
+To look after her eyes, Kiki does her reading on an e-ink reader. One day she pointed out that if we cared about the environment, we should be wasting less paper — so why not "print" straight to the e-reader instead?
+
+The idea turned out to be simple and practical. Every computer and phone already knows how to print, so printing to an e-ink reader needs no changes to the apps and systems people already use: pick the printer, press Print, and the document lands on the reader instead of on paper. That is how this app came to be.
+
+Thank you, Kiki. 💚
+
+### 项目缘起
+
+InkPrint 的灵感来自我的女儿 Kiki。
+
+为了保护视力，Kiki 一直用电纸书阅读。有一天她说，为了保护环境，我们应该少浪费一些纸张，那为什么不把要打印的东西直接“打印”到电纸书上呢？
+
+这个想法简单又实用。电脑和手机本来就会打印，打印到电纸书不需要改造任何已有的应用和信息系统：选中打印机，点一下打印，文档就会出现在电纸书上，而不是纸上，既方便又环保。于是就有了这个 App。
+
+谢谢你，Kiki。💚
+
+---
+
 ## How it works
 
 ```
