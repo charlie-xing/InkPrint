@@ -32,7 +32,7 @@ impl MdnsAdvertiser {
             let mut props = HashMap::new();
             props.insert("txtvers".to_string(), "1".to_string());
             props.insert("pdl".to_string(),
-                "application/pdf,image/urf,image/pwg-raster,image/jpeg".to_string());
+                crate::ipp::operations::SUPPORTED_DOCUMENT_FORMATS.join(","));
             props.insert("rp".to_string(),       "ipp/print".to_string());
             props.insert("ty".to_string(),       "InkPrint Virtual Printer".to_string());
             props.insert("adminurl".to_string(), format!("http://{}:{}/", ip_str, self.port));

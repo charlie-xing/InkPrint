@@ -43,6 +43,13 @@ pub fn dispatch(
     serialize_response(&response)
 }
 
+/// What document-format-supported advertises. Only PDF is actually stored;
+/// every format listed here is one a client may pick and send as-is, so
+/// anything else we would reject (PWG raster, JPEG, ...) must stay out.
+/// image/urf is the one exception: iOS/macOS want it to treat the printer as
+/// AirPrint, but always prefer PDF when it is offered.
+pub const SUPPORTED_DOCUMENT_FORMATS: &[&str] = &["application/pdf", "image/urf"];
+
 fn handle_get_printer_attributes(
     request: &IppRequest,
     printer: &Arc<PrinterState>,
@@ -177,12 +184,9 @@ fn handle_get_printer_attributes(
     if want("document-format-supported") {
         printer_group.add(IppAttribute::new_multi(
             "document-format-supported",
-            vec![
-                IppValue::MimeMediaType("application/pdf".to_string()),
-                IppValue::MimeMediaType("image/urf".to_string()),
-                IppValue::MimeMediaType("image/pwg-raster".to_string()),
-                IppValue::MimeMediaType("image/jpeg".to_string()),
-            ],
+            SUPPORTED_DOCUMENT_FORMATS.iter()
+                .map(|f| IppValue::MimeMediaType(f.to_string()))
+                .collect(),
         ));
     }
     if want("pdf-versions-supported") {
@@ -411,24 +415,6 @@ fn handle_get_printer_attributes(
             ],
         ));
     }
-    if want("pwg-raster-document-resolution-supported") {
-        printer_group.add(IppAttribute::new(
-            "pwg-raster-document-resolution-supported",
-            IppValue::Resolution { cross_feed: 300, feed: 300, units: 3 },
-        ));
-    }
-    if want("pwg-raster-document-sheet-back") {
-        printer_group.add(IppAttribute::new(
-            "pwg-raster-document-sheet-back",
-            IppValue::Keyword("normal".to_string()),
-        ));
-    }
-    if want("pwg-raster-document-type-supported") {
-        printer_group.add(IppAttribute::new(
-            "pwg-raster-document-type-supported",
-            IppValue::Keyword("sgray-8".to_string()),
-        ));
-    }
 
     IppResponseBuilder::new(IppStatusCode::SuccessfulOk, request.request_id)
         .add_group(op)
@@ -463,11 +449,9 @@ fn handle_print_job(
         _ => "application/octet-stream".to_string(),
     };
 
-    // Only accept PDF (and octet-stream as a generic fallback).
-    // Raster formats (image/urf, image/pwg-raster, image/jpeg) are declared in
-    // document-format-supported for IPP Everywhere compliance, but we don't actually
-    // store them. Returning ClientErrorDocumentFormatNotSupported causes well-behaved
-    // clients (macOS, iOS) to retry with document-format-default (application/pdf).
+    // Only accept PDF (and octet-stream as a generic fallback). image/urf is
+    // declared only so Apple clients recognise an AirPrint printer; they send
+    // PDF whenever the printer supports it.
     match doc_format.as_str() {
         "application/pdf" | "application/octet-stream" => {}
         _ => {
@@ -481,6 +465,27 @@ fn handle_print_job(
 
     if request.document_data.is_empty() {
         return error_response(request.request_id, IppStatusCode::ClientErrorBadRequest, "No document data");
+    }
+
+    // The declared format can't be trusted: a printer added by IP with a
+    // non-driverless driver (Generic PostScript, Generic / Text Only, ...)
+    // sends PostScript/text/raster as application/octet-stream. Saving that
+    // as .pdf yields a file the reader reports as corrupted, so check the
+    // content itself and fail the job visibly on the client instead.
+    if !is_pdf(&request.document_data) {
+        let detected = sniff_format(&request.document_data);
+        tracing::warn!(
+            "Rejected job '{}': declared {} but content looks like {}",
+            job_name, doc_format, detected
+        );
+        return error_response(
+            request.request_id,
+            IppStatusCode::ClientErrorDocumentFormatNotSupported,
+            &format!(
+                "Document is {}, not PDF; add the printer as AirPrint / IPP Everywhere so it sends PDF",
+                detected
+            ),
+        );
     }
 
     let job_id = printer.next_job_id();
@@ -685,6 +690,42 @@ fn media_col_letter() -> IppValue {
     ])
 }
 
+/// PDF readers accept a `%PDF-` header anywhere in the first 1024 bytes
+/// (some generators prepend junk such as a UTF-8 BOM or PJL), so do the same.
+fn is_pdf(data: &[u8]) -> bool {
+    let head = &data[..data.len().min(1024)];
+    head.windows(5).any(|w| w == b"%PDF-")
+}
+
+/// Best-effort name for a non-PDF payload, used in logs and the error message.
+fn sniff_format(data: &[u8]) -> &'static str {
+    if data.starts_with(b"%!PS") || data.starts_with(b"\x04%!PS") {
+        "PostScript"
+    } else if data.starts_with(b"RaS2") || data.starts_with(b"RaS3") {
+        "PWG/CUPS raster"
+    } else if data.starts_with(b"UNIRAST") {
+        "Apple raster (URF)"
+    } else if data.starts_with(b"\xFF\xD8\xFF") {
+        "JPEG"
+    } else if data.starts_with(b"\x1B%-12345X") || data.starts_with(b"\x1BE") {
+        "PCL/PJL"
+    } else if data.starts_with(b"\x1F\x8B") {
+        "gzip-compressed data"
+    } else if is_text(&data[..data.len().min(512)]) {
+        "plain text"
+    } else {
+        "an unknown format"
+    }
+}
+
+/// UTF-8 check that tolerates a multi-byte character cut off by the slice.
+fn is_text(head: &[u8]) -> bool {
+    match std::str::from_utf8(head) {
+        Ok(_) => true,
+        Err(e) => e.error_len().is_none(),
+    }
+}
+
 fn error_response(request_id: u32, status: IppStatusCode, message: &str) -> IppResponse {
     let mut op = standard_operation_attrs(request_id);
     op.add(IppAttribute::new(
@@ -857,5 +898,51 @@ mod tests {
             .unwrap();
         assert_eq!(jg.get("job-id"), Some(&IppValue::Integer(job_id)));
         assert_eq!(jg.get("job-name"), Some(&IppValue::NameWithoutLanguage("My Doc".to_string())));
+    }
+
+    #[test]
+    fn test_print_job_rejects_non_pdf_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let printer = make_printer(dir.path());
+
+        // What CUPS sends for a printer added with a Generic PostScript driver
+        let raw = build_request(0x0002, 6, vec![
+            (0x45, "printer-uri", b"ipp://127.0.0.1:631/ipp/print"),
+            (0x42, "job-name", b"Web Page"),
+            (0x49, "document-format", b"application/octet-stream"),
+        ], b"%!PS-Adobe-3.0\n%%Pages: 1\n");
+
+        let req = parse_ipp_request(&raw).unwrap();
+        let resp = parse_ipp_request(&dispatch(&req, &printer, None)).unwrap();
+
+        assert_eq!(u16::from(resp.operation_id), 0x040Au16);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn test_print_job_accepts_octet_stream_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let printer = make_printer(dir.path());
+
+        let raw = build_request(0x0002, 7, vec![
+            (0x45, "printer-uri", b"ipp://127.0.0.1:631/ipp/print"),
+            (0x42, "job-name", b"Doc"),
+            (0x49, "document-format", b"application/octet-stream"),
+        ], b"\xEF\xBB\xBF%PDF-1.7 body");
+
+        let req = parse_ipp_request(&raw).unwrap();
+        let resp = parse_ipp_request(&dispatch(&req, &printer, None)).unwrap();
+
+        assert_eq!(u16::from(resp.operation_id), 0x0000u16);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn test_sniff_format() {
+        assert_eq!(sniff_format(b"%!PS-Adobe-3.0"), "PostScript");
+        assert_eq!(sniff_format(b"RaS2...."), "PWG/CUPS raster");
+        assert_eq!(sniff_format(b"UNIRAST\0"), "Apple raster (URF)");
+        assert_eq!(sniff_format(b"Hello, world\n"), "plain text");
+        assert_eq!(sniff_format(b"\x00\xFF\xFE\x80"), "an unknown format");
     }
 }
