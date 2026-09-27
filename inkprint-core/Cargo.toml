@@ -2,6 +2,8 @@
 name = "inkprint-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+authors = ["charlie-xing <xjohn1666@gmail.com>"]
 
 [lib]
 name = "inkprint_core"

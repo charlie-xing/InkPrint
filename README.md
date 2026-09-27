@@ -254,4 +254,8 @@ inkprint/
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 charlie-xing
+
+If you use InkPrint commercially, please drop a line to [xjohn1666@gmail.com](mailto:xjohn1666@gmail.com) — I'd love to hear about it. This is a friendly request, not an extra condition: the MIT license alone governs your rights.
+
+如将 InkPrint 用于商业用途，欢迎发邮件至 [xjohn1666@gmail.com](mailto:xjohn1666@gmail.com) 告知。这只是请求，并非附加条件，您的权利仅以 MIT 协议为准。
