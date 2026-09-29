@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InkPrint — Turn your e-ink reader into a wireless printer</title>
+<meta name="description" content="InkPrint is a free, open-source Android app that turns your BOOX (or any Android e-ink reader) into a real IPP/AirPrint wireless printer. Print from any device — every page lands as a PDF on your reader. No paper. No cloud. No accounts.">
+<meta property="og:title" content="InkPrint — Turn your e-ink reader into a wireless printer">
+<meta property="og:description" content="Print from any device. Read on e-ink. Waste zero paper. Free and open source (MIT).">
+<meta property="og:type" content="website">
+<meta property="og:image" content="screenshots/macos-print-dialog.png">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%231a1a18'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='%23FAF8F3' font-family='Georgia'>Ip</text></svg>">
+<style>
+  :root{
+    --paper:#FAF8F2; --paper2:#F3F0E8; --ink:#1b1a17; --muted:#6f6a5e;
+    --accent:#1f5c3f; --accent-soft:#e7efe9; --line:#e3ded2; --card:#ffffff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--paper); color:var(--ink); line-height:1.65; font-size:17px;
+    background-image:radial-gradient(#00000008 1px, transparent 1px);
+    background-size:22px 22px;
+  }
+  h1,h2,h3{font-family:Georgia,"Times New Roman",serif; line-height:1.25; letter-spacing:-.01em}
+  a{color:var(--accent)}
+  .wrap{max-width:1080px; margin:0 auto; padding:0 24px}
+  /* nav */
+  nav{position:sticky; top:0; z-index:50; background:rgba(250,248,242,.92); backdrop-filter:blur(8px); border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex; align-items:center; justify-content:space-between; height:64px}
+  .brand{font-family:Georgia,serif; font-weight:bold; font-size:22px; color:var(--ink); text-decoration:none}
+  .brand span{color:var(--accent)}
+  .navlinks{display:flex; gap:26px; align-items:center}
+  .navlinks a{color:var(--muted); text-decoration:none; font-size:15px}
+  .navlinks a:hover{color:var(--ink)}
+  .btn{display:inline-block; padding:12px 26px; border-radius:999px; text-decoration:none; font-weight:600; font-size:16px; transition:transform .15s ease, box-shadow .15s ease}
+  .btn:hover{transform:translateY(-2px)}
+  .btn-dark{background:var(--ink); color:var(--paper)}
+  .btn-accent{background:var(--accent); color:#fff}
+  .btn-ghost{border:1.5px solid var(--ink); color:var(--ink); background:transparent}
+  .btn-sm{padding:9px 20px; font-size:14px}
+  .menu-btn{display:none; background:none; border:none; font-size:24px; cursor:pointer; color:var(--ink)}
+  /* hero */
+  .hero{padding:96px 0 72px; text-align:center}
+  .eyebrow{display:inline-block; font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); background:var(--accent-soft); padding:7px 18px; border-radius:999px; margin-bottom:26px; font-weight:600}
+  .hero h1{font-size:clamp(38px,6vw,64px); max-width:820px; margin:0 auto 22px}
+  .hero h1 em{font-style:italic; color:var(--accent)}
+  .hero p.lead{font-size:20px; color:var(--muted); max-width:700px; margin:0 auto 36px}
+  .cta-row{display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-bottom:44px}
+  .pills{display:flex; gap:10px; justify-content:center; flex-wrap:wrap}
+  .pill{font-size:13px; color:var(--muted); border:1px solid var(--line); background:var(--card); padding:6px 15px; border-radius:999px}
+  .pill b{color:var(--accent)}
+  /* sections */
+  section{padding:72px 0}
+  section.alt{background:var(--paper2); border-top:1px solid var(--line); border-bottom:1px solid var(--line)}
+  .sec-head{text-align:center; max-width:680px; margin:0 auto 48px}
+  .sec-head h2{font-size:clamp(28px,4vw,40px); margin-bottom:14px}
+  .sec-head p{color:var(--muted); font-size:18px}
+  /* steps */
+  .steps{display:grid; grid-template-columns:repeat(3,1fr); gap:22px}
+  .step{background:var(--card); border:1px solid var(--line); border-radius:18px; padding:32px 28px; position:relative}
+  .step .num{font-family:Georgia,serif; font-size:15px; font-weight:bold; color:#fff; background:var(--accent); width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; margin-bottom:18px}
+  .step h3{font-size:21px; margin-bottom:10px}
+  .step p{color:var(--muted); font-size:15.5px}
+  .step code{background:var(--paper2); padding:2px 8px; border-radius:6px; font-size:14px}
+  /* video */
+  .video-shell{max-width:820px; margin:0 auto; border-radius:20px; overflow:hidden; border:1px solid var(--line); box-shadow:0 24px 60px -24px rgba(27,26,23,.25); background:#000}
+  .video-shell iframe{display:block; width:100%; aspect-ratio:16/9; border:0}
+  /* shots */
+  .shots{display:grid; grid-template-columns:1fr 1fr; gap:26px; max-width:960px; margin:0 auto}
+  figure.shot{background:var(--card); border:1px solid var(--line); border-radius:18px; overflow:hidden}
+  figure.shot img{display:block; width:100%; height:auto}
+  figure.shot figcaption{padding:16px 22px; color:var(--muted); font-size:15px; border-top:1px solid var(--line)}
+  /* business */
+  .biz-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:22px; max-width:960px; margin:0 auto 40px}
+  .biz{background:var(--card); border:1px solid var(--line); border-radius:18px; padding:30px 28px}
+  .biz .icon{font-size:30px; margin-bottom:12px}
+  .biz h3{font-size:20px; margin-bottom:8px}
+  .biz p{color:var(--muted); font-size:15.5px}
+  .biz-cta{text-align:center; max-width:640px; margin:0 auto}
+  .biz-cta p{color:var(--muted); margin-bottom:22px; font-size:18px}
+  /* story */
+  .story{max-width:720px; margin:0 auto; text-align:center}
+  .story h2{font-size:clamp(28px,4vw,38px); margin-bottom:20px}
+  .story p{color:var(--muted); font-size:18px; margin-bottom:16px}
+  .story .thanks{font-family:Georgia,serif; font-size:22px; color:var(--ink); margin-top:26px}
+  /* tech */
+  .tech-list{max-width:760px; margin:0 auto; background:var(--card); border:1px solid var(--line); border-radius:18px; padding:12px 34px}
+  .tech-list li{list-style:none; padding:16px 0; border-bottom:1px dashed var(--line); font-size:15.5px; color:var(--muted)}
+  .tech-list li:last-child{border-bottom:none}
+  .tech-list li b{color:var(--ink)}
+  .tech-list code{background:var(--paper2); padding:2px 8px; border-radius:6px; font-size:13.5px; color:var(--ink)}
+  /* download */
+  .dl-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:22px; max-width:960px; margin:0 auto}
+  .dl{background:var(--card); border:1px solid var(--line); border-radius:18px; padding:34px 28px; text-align:center; display:flex; flex-direction:column; gap:12px}
+  .dl h3{font-size:21px}
+  .dl p{color:var(--muted); font-size:15px; flex:1}
+  .dl .tag{font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--accent); font-weight:700}
+  /* footer */
+  footer{border-top:1px solid var(--line); padding:44px 0; color:var(--muted); font-size:14.5px}
+  footer .wrap{display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap; align-items:center}
+  footer a{color:var(--muted); text-decoration:none; margin-left:18px}
+  footer a:hover{color:var(--ink)}
+  /* reveal */
+  .rv{opacity:0; transform:translateY(18px); transition:opacity .6s ease, transform .6s ease}
+  .rv.on{opacity:1; transform:none}
+  @media(max-width:820px){
+    .steps,.biz-grid,.shots,.dl-grid{grid-template-columns:1fr}
+    .navlinks{display:none; position:absolute; top:64px; left:0; right:0; background:var(--paper); flex-direction:column; padding:20px; border-bottom:1px solid var(--line); gap:16px}
+    .navlinks.open{display:flex}
+    .menu-btn{display:block}
+    .hero{padding:64px 0 52px}
+    section{padding:52px 0}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top">Ink<span>Print</span></a>
+    <button class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
+    <div class="navlinks" id="navLinks">
+      <a href="#how">How it works</a>
+      <a href="#business">For business</a>
+      <a href="#story">Story</a>
+      <a href="#download">Download</a>
+      <a class="btn btn-dark btn-sm" href="https://github.com/charlie-xing/InkPrint">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div class="eyebrow rv">Free · Open source (MIT)</div>
+    <h1 class="rv">Turn your e-ink reader into a <em>wireless printer.</em></h1>
+    <p class="lead rv">InkPrint is an Android app for BOOX and other e-ink readers. Print from any Mac, iPhone, Windows, Linux or Android device — every page lands as a PDF on your reader, ready to read on e-ink.</p>
+    <div class="cta-row rv">
+      <a class="btn btn-accent" href="#demo">▶ Watch the demo</a>
+      <a class="btn btn-ghost" href="#download">⬇ Get the app</a>
+    </div>
+    <div class="pills rv">
+      <span class="pill"><b>No</b> paper</span>
+      <span class="pill"><b>No</b> cloud</span>
+      <span class="pill"><b>No</b> accounts</span>
+      <span class="pill"><b>No</b> analytics</span>
+      <span class="pill">IPP 2.0 · AirPrint</span>
+    </div>
+  </div>
+</header>
+
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2>Printing, minus the printer</h2>
+      <p>Every app on every OS already knows how to print. InkPrint simply makes your e-reader the destination.</p>
+    </div>
+    <div class="steps">
+      <div class="step rv">
+        <div class="num">1</div>
+        <h3>Install &amp; start</h3>
+        <p>Install InkPrint on your BOOX or Android e-ink reader, tap <b>Start printer service</b>. That's the whole setup.</p>
+      </div>
+      <div class="step rv">
+        <div class="num">2</div>
+        <h3>Hit Print anywhere</h3>
+        <p>On your Mac, iPhone, Windows, Linux or Android device, press <code>Ctrl+P</code> / <code>⌘P</code>. InkPrint shows up like any printer — zero-config AirPrint on Apple devices.</p>
+      </div>
+      <div class="step rv">
+        <div class="num">3</div>
+        <h3>Read it on e-ink</h3>
+        <p>Seconds later the document is a PDF in <code>/Documents/InkPrint/</code> on your reader. Read, annotate and sign it with your stylus. Zero paper touched.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="demo">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2>See it in action</h2>
+      <p>Print a boarding pass from a MacBook — it lands on the BOOX instantly.</p>
+    </div>
+    <div class="video-shell rv">
+      <iframe src="https://www.youtube-nocookie.com/embed/e_IqGYBAFw8" title="InkPrint demo — Print to Your E-Reader, Not Paper" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+    </div>
+  </div>
+</section>
+
+<section id="shots">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2>No new workflow to learn</h2>
+      <p>The print dialog you already use. The reader you already own.</p>
+    </div>
+    <div class="shots">
+      <figure class="shot rv">
+        <img src="screenshots/macos-print-dialog.png" alt="macOS print dialog showing InkPrint as a printer destination" loading="lazy">
+        <figcaption>macOS sees InkPrint as a regular printer destination.</figcaption>
+      </figure>
+      <figure class="shot rv">
+        <img src="screenshots/android-app.png" alt="InkPrint Android app showing a received PDF file" loading="lazy">
+        <figcaption>Print jobs arrive as PDFs in the InkPrint app.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="business">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2>For business: kill the printer fleet</h2>
+      <p>The office printer is the least secure device you own — and a money fire that never goes out. Put a printer on every desk that uses zero paper.</p>
+    </div>
+    <div class="biz-grid">
+      <div class="biz rv">
+        <div class="icon">🔒</div>
+        <h3>Nothing in the tray</h3>
+        <p>Confidential documents go straight to the person's own reader. No shared output tray, no abandoned prints, no shredding. Nothing ever leaves your local network — no cloud in the loop, so there's nothing to breach.</p>
+      </div>
+      <div class="biz rv">
+        <div class="icon">💸</div>
+        <h3>Nothing to maintain</h3>
+        <p>No toner, no paper, no maintenance contracts, no print servers to babysit. An old BOOX becomes a printer that never jams. Open source (MIT) means the code is auditable.</p>
+      </div>
+      <div class="biz rv">
+        <div class="icon">🌱</div>
+        <h3>ESG you can count</h3>
+        <p>Every page "printed" to e-ink is a page never bought, never toned, never shredded. Meeting agendas, drafts, reports — measurable paper reduction for your sustainability report.</p>
+      </div>
+      <div class="biz rv">
+        <div class="icon">✍️</div>
+        <h3>Print → sign → send</h3>
+        <p>Print the contract to the reader, sign it with the stylus, send it back. The whole print-sign-scan-email dance collapses into one device that never touched paper.</p>
+      </div>
+    </div>
+    <div class="biz-cta rv">
+      <p><b>Pilot it with the e-readers you already have.</b><br>We're looking for a few companies to pilot InkPrint — tell us about your paperless goals.</p>
+      <a class="btn btn-dark" href="mailto:xjohn1666@gmail.com?subject=InkPrint%20pilot%20inquiry">Contact us about a pilot</a>
+    </div>
+  </div>
+</section>
+
+<section id="story">
+  <div class="wrap">
+    <div class="story rv">
+      <h2>Made for my daughter's eyes</h2>
+      <p>InkPrint was inspired by my daughter, Kiki. To protect her eyesight, she does all her reading on an e-ink reader. One day she said: if we care about the environment, we should waste less paper — so why not "print" straight to the e-reader instead?</p>
+      <p>She was right. It turned out to be simple and practical: every computer and phone already knows how to print, so nothing had to change. Pick the printer, press Print, and the document lands on the reader instead of on paper.</p>
+      <div class="thanks">Thank you, Kiki. 💚</div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="tech">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2>Under the hood</h2>
+      <p>For the curious: it's a real print server, not a hack.</p>
+    </div>
+    <ul class="tech-list rv">
+      <li><b>IPP 2.0</b> print server written in <b>Rust</b> (<code>inkprint-core</code> crate), compiled to Android via <code>cargo-ndk</code>, bridged to Kotlin with <code>UniFFI</code>.</li>
+      <li><b>AirPrint-compatible</b> — advertises over mDNS/Bonjour (<code>_ipp._tcp</code> + AirPrint subtype), so macOS and iOS discover it with zero configuration.</li>
+      <li>Windows and Linux connect over standard <b>IPP Everywhere</b> / manual IPP setup.</li>
+      <li><b>100% local:</b> no accounts, no servers, no analytics, no tracking. Your documents never leave your Wi-Fi.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <h2>Get InkPrint</h2>
+      <p>Free forever. Open source. No ads, no premium tier.</p>
+    </div>
+    <div class="dl-grid">
+      <div class="dl rv">
+        <div class="tag">Recommended</div>
+        <h3>GitHub Releases</h3>
+        <p>Download the latest APK directly and sideload it onto your reader.</p>
+        <a class="btn btn-accent btn-sm" href="https://github.com/charlie-xing/InkPrint/releases">Download APK</a>
+      </div>
+      <div class="dl rv">
+        <div class="tag">Beta</div>
+        <h3>Google Play</h3>
+        <p>Currently in closed testing — join the tester group to get it from the Play Store.</p>
+        <a class="btn btn-ghost btn-sm" href="https://groups.google.com/g/inkprint-testers">Join testing</a>
+      </div>
+      <div class="dl rv">
+        <div class="tag">In review</div>
+        <h3>F-Droid</h3>
+        <p>Submission filed and under review. Check back soon for the F-Droid listing.</p>
+        <a class="btn btn-ghost btn-sm" href="https://gitlab.com/fdroid/rfp/-/work_items/4475">Track progress</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>© 2026 Charlie Xing · Released under the <a href="https://github.com/charlie-xing/InkPrint/blob/main/LICENSE" style="margin:0">MIT License</a></div>
+    <div>
+      <a href="https://github.com/charlie-xing/InkPrint">GitHub</a>
+      <a href="privacy-policy.html">Privacy Policy</a>
+      <a href="https://www.youtube.com/watch?v=e_IqGYBAFw8">Demo video</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // mobile menu
+  var btn = document.getElementById('menuBtn'), links = document.getElementById('navLinks');
+  btn.addEventListener('click', function(){ links.classList.toggle('open'); });
+  links.addEventListener('click', function(e){ if(e.target.tagName === 'A') links.classList.remove('open'); });
+  // reveal on scroll
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('on'); io.unobserve(e.target); } });
+  }, {threshold:.12});
+  document.querySelectorAll('.rv').forEach(function(el){ io.observe(el); });
+</script>
+</body>
+</html>
