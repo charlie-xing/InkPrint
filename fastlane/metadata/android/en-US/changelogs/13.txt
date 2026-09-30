@@ -1,0 +1,4 @@
+- Cancel-Job support
+- Reachable over Tailscale/VPN; the app lists every address the printer can be reached at
+- Choose a save folder and manage received files in the app
+- Only PDF jobs are accepted, so a wrong driver no longer produces broken files

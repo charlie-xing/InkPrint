@@ -1,0 +1,20 @@
+InkPrint turns your BOOX (or any Android e-ink reader) into a wireless printer. Documents printed from any computer or phone on your network are saved as PDF files on the reader instead of on paper.
+
+Every computer and phone already knows how to print, so nothing else needs to change: pick InkPrint as the printer, press Print, and the document lands on your reader.
+
+<b>Features</b>
+<ul>
+<li>IPP printer, compatible with AirPrint: macOS, iOS and iPadOS find it automatically</li>
+<li>Works with Windows, Linux (CUPS) and Android's built-in print service</li>
+<li>Every job is saved as a PDF, ideal for e-ink reading</li>
+<li>Choose your own save folder, and browse, rename, move, share or delete files in the app</li>
+<li>Can also be reached over Tailscale or a VPN by adding the printer by IP</li>
+</ul>
+
+<b>Privacy</b>
+InkPrint collects nothing: no accounts, no analytics, no servers, no outbound connections. Everything stays on your device and your local network.
+
+<b>How to use</b>
+1. Open InkPrint and tap Start Printer Service
+2. Add the printer on your computer or phone (the app shows the steps for each platform)
+3. Print — the PDF appears in the app and in your save folder
