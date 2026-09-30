@@ -1,0 +1,2 @@
+- 为 F-Droid 提供可复现构建：锁定 Rust 依赖版本，Gradle wrapper 加上完整性校验
+- 与 0.2 相比无功能变化

@@ -1,0 +1,2 @@
+- Reproducible build for F-Droid: pinned Rust dependencies and a verified Gradle wrapper
+- No functional changes since 0.2
