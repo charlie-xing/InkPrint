@@ -44,7 +44,9 @@ static SERVER_HANDLE: Lazy<Mutex<Option<ServerHandle>>> = Lazy::new(|| Mutex::ne
 fn init_android_logging() {
     android_logger::init_once(
         android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Debug)
+            // Info: oar-ocr logs every recognised line at debug, which floods
+            // logcat and pushes out the lines worth reading.
+            .with_max_level(log::LevelFilter::Info)
             .with_tag("inkprint-rs"),
     );
     // Bridge tracing:: → log:: → android_logger so tracing::error!/info! appear in logcat

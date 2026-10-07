@@ -130,6 +130,38 @@ pub fn assign(regions: Vec<(Rect, Kind)>, lines: Vec<Line>, images: &[Rect], pag
     regions
 }
 
+/// Whether the text layer misses text the layout model sees: a quarter or
+/// more of the area of its text regions holds no text-layer line. Happens
+/// when part of a page was printed as outlines (macOS prints Chrome's web
+/// fonts that way while the header/footer stay real text) or pasted in as
+/// a picture.
+pub fn text_layer_has_gaps(regions: &[(Rect, Kind)], lines: &[Line], page: &Rect) -> bool {
+    let (mut total, mut empty) = (0.0f32, 0.0f32);
+    for (r, k) in regions {
+        if !k.is_text() {
+            continue;
+        }
+        total += r.area();
+        // Text lines cover a good share of a real text block; a stray line
+        // (a title the model lumped in) doesn't make a big block "text".
+        let covered: f32 = lines.iter().map(|l| l.rect.intersection_area(r)).sum();
+        if covered < 0.08 * r.area() {
+            empty += r.area();
+        }
+    }
+    empty > 0.25 * total && empty > 0.01 * page.area()
+}
+
+/// Text-layer lines plus the OCR lines that don't repeat one of them.
+pub fn merge_ocr(mut text: Vec<Line>, ocr: Vec<Line>) -> Vec<Line> {
+    let extra: Vec<Line> = ocr
+        .into_iter()
+        .filter(|o| !text.iter().any(|t| o.rect.covered_by(&t.rect) > 0.3 || t.rect.covered_by(&o.rect) > 0.3))
+        .collect();
+    text.extend(extra);
+    text
+}
+
 /// Tables found from text alone: a run of at least three rows split into
 /// two or more columns whose left edges line up (rows of a single segment
 /// that continues one of the columns are wrapped cell text). Two-column body
@@ -294,6 +326,35 @@ mod tests {
         assert_eq!(r[1].kind, Kind::Figure);
         assert_eq!(r[1].lines[0].text, "label in figure");
         assert_eq!(r[2].lines[0].text, "stray");
+    }
+
+    #[test]
+    fn missing_body_text_calls_for_ocr() {
+        let regions = vec![
+            (Rect::new(100.0, 20.0, 900.0, 60.0), Kind::Furniture),
+            (Rect::new(100.0, 200.0, 900.0, 800.0), Kind::Text),
+            (Rect::new(100.0, 900.0, 900.0, 950.0), Kind::Text),
+        ];
+        // Only the small block has text-layer lines: the big one is outlines.
+        let lines = vec![line(100.0, 910.0, 800.0, "caption-like")];
+        assert!(text_layer_has_gaps(&regions, &lines, &page()));
+        // One stray line in the big block is not enough text for it.
+        let stray = vec![line(100.0, 210.0, 800.0, "title"), line(100.0, 910.0, 800.0, "x")];
+        assert!(text_layer_has_gaps(&regions, &stray, &page()));
+        let full: Vec<Line> = (0..12)
+            .map(|i| line(100.0, 200.0 + 50.0 * i as f32, 880.0, "body"))
+            .chain([line(100.0, 910.0, 800.0, "x")])
+            .collect();
+        assert!(!text_layer_has_gaps(&regions, &full, &page()));
+    }
+
+    #[test]
+    fn ocr_fills_in_without_duplicating() {
+        let text = vec![line(100.0, 100.0, 800.0, "from text layer")];
+        let ocr = vec![line(102.0, 101.0, 798.0, "from text 1ayer"), line(100.0, 300.0, 800.0, "only in pixels")];
+        let merged = merge_ocr(text, ocr);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[1].text, "only in pixels");
     }
 
     #[test]

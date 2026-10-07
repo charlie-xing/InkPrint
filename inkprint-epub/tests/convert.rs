@@ -89,3 +89,17 @@ fn scanned_page_without_ocr_stays_a_picture() {
     assert_eq!(stats.image_pages, 1);
     assert!(chapters(&out).contains("<img src=\"images/p1.jpg\""));
 }
+
+/// macOS prints Chrome's web fonts as outlines: the text layer holds only the
+/// header and footer, so the body must come from OCR.
+#[test]
+fn outlined_text_is_recognised() {
+    let Some(opts) = options(true) else { return eprintln!("skipped: INKPRINT_ORT/INKPRINT_MODELS not set") };
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("web.epub");
+    let stats = convert(&fixture("outlined-web-page.pdf"), &out, &opts, None).unwrap();
+    assert_eq!(stats.ocr_pages, 1);
+    let text = chapters(&out);
+    assert!(text.contains("The story behind InkPrint"), "{text}");
+    assert!(text.contains("inspired by my daughter"), "{text}");
+}

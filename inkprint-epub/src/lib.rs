@@ -241,9 +241,21 @@ fn convert_page<W: std::io::Write + std::io::Seek>(
     let picture_area: f32 = info.images.iter().map(|r| r.area()).sum();
     let picture_only = info.chars < MIN_TEXT_CHARS && (info.chars == 0 || picture_area > 0.5 * info.bounds.area());
 
+    let model = layout_regions(engine, &bitmap, index);
     let mut used_ocr = false;
     let lines = if !picture_only {
-        Some(info.lines)
+        let mut lines = info.lines;
+        // Part of the page may be outlines or a picture the text layer
+        // doesn't cover: recognise the page and fill in what's missing.
+        let gaps = model.as_ref().is_some_and(|m| layout::text_layer_has_gaps(m, &lines, &info.bounds))
+            || unexplained_ink(&bitmap, &lines, &info.images) > UNEXPLAINED_INK;
+        if gaps {
+            if let Some(ocr) = ocr_lines(engine, opts, &bitmap, scale, index) {
+                used_ocr = !ocr.is_empty();
+                lines = layout::merge_ocr(lines, ocr);
+            }
+        }
+        Some(lines)
     } else {
         let ocr_lines = ocr_lines(engine, opts, &bitmap, scale, index);
         used_ocr = ocr_lines.as_ref().is_some_and(|l| !l.is_empty());
@@ -259,7 +271,7 @@ fn convert_page<W: std::io::Write + std::io::Seek>(
         return Ok(Page { blocks: vec![Block::Figure { href, alt: String::new() }], ocr: false, full_image: true });
     };
 
-    let regions = match layout_regions(engine, &bitmap, index) {
+    let regions = match model {
         Some(r) => {
             let r = layout::with_detected_tables(r, &lines, &info.bounds);
             layout::assign(r, lines, &info.images, &info.bounds)
@@ -404,6 +416,33 @@ fn jpeg(img: &GrayImage) -> Result<Vec<u8>, Error> {
     let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 80);
     img.write_with_encoder(enc).map_err(|e| Error::Image(e.to_string()))?;
     Ok(buf.into_inner())
+}
+
+/// Share of sampled page pixels that may be text drawn as outlines before
+/// the page is worth OCRing (rules and boxes alone stay well below).
+const UNEXPLAINED_INK: f32 = 0.01;
+
+/// Share of the page (sampled) that is dark ink outside every text-layer
+/// line and placed image — text the text layer doesn't know about, e.g.
+/// web fonts macOS printed as outlines.
+fn unexplained_ink(img: &RgbImage, lines: &[text::Line], images: &[Rect]) -> f32 {
+    let (w, h) = img.dimensions();
+    let (mut ink, mut seen) = (0u32, 0u32);
+    for y in (0..h).step_by(3) {
+        for x in (0..w).step_by(3) {
+            seen += 1;
+            let p = img.get_pixel(x, y).0;
+            if (p[0] as u32 * 3 + p[1] as u32 * 6 + p[2] as u32) / 10 >= 140 {
+                continue;
+            }
+            let (fx, fy) = (x as f32, y as f32);
+            let inside = |r: &Rect| fx >= r.x0 - 4.0 && fx <= r.x1 + 4.0 && fy >= r.y0 - 4.0 && fy <= r.y1 + 4.0;
+            if !lines.iter().any(|l| inside(&l.rect)) && !images.iter().any(inside) {
+                ink += 1;
+            }
+        }
+    }
+    if seen == 0 { 0.0 } else { ink as f32 / seen as f32 }
 }
 
 /// Hardly any ink on the page.

@@ -97,6 +97,13 @@ pub fn release() {
     }
 }
 
+/// Drops OCR noise: low-confidence reads and "lines" with fewer than two
+/// letters, digits or CJK characters — icons, bullets and rules read as text.
+fn worth_keeping(text: &str, confidence: f32) -> bool {
+    let meaningful = text.chars().filter(|c| c.is_alphanumeric()).count();
+    confidence >= 0.5 && meaningful >= 2
+}
+
 impl Engine {
     /// Layout regions in page pixels.
     pub fn layout(&self, page: &RgbImage) -> Result<Vec<(Rect, Kind)>, Error> {
@@ -130,7 +137,7 @@ impl Engine {
             .iter()
             .filter_map(|r| {
                 let text = r.text.as_deref()?.trim();
-                if text.is_empty() {
+                if !worth_keeping(text, r.confidence.unwrap_or(1.0)) {
                     return None;
                 }
                 let b = &r.bounding_box;
@@ -140,5 +147,19 @@ impl Engine {
                 Some(Line { rect, text: text.to_string(), size })
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worth_keeping;
+
+    #[test]
+    fn ocr_noise_is_dropped() {
+        assert!(worth_keeping("Usage", 0.95));
+        assert!(worth_keeping("项目", 0.9));
+        assert!(!worth_keeping("口", 0.9));
+        assert!(!worth_keeping("• ⋮", 0.9));
+        assert!(!worth_keeping("Aakb h 8", 0.3));
     }
 }
