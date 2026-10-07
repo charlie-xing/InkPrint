@@ -3,15 +3,63 @@ use std::net::Ipv4Addr;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use tokio::sync::oneshot;
 
+use crate::ipp::printer::PrinterProfile;
+
 pub struct MdnsAdvertiser {
-    printer_name: String,
+    profiles: Vec<PrinterProfile>,
+    host_name: String,
     ip: Ipv4Addr,
     port: u16,
 }
 
 impl MdnsAdvertiser {
-    pub fn new(printer_name: String, ip: Ipv4Addr, port: u16) -> Self {
-        Self { printer_name, ip, port }
+    /// Advertises every profile (PDF printer, EPUB printer) as its own IPP
+    /// service on one shared host record.
+    pub fn new(profiles: Vec<PrinterProfile>, base_name: &str, ip: Ipv4Addr, port: u16) -> Self {
+        let host_name = format!("{}.local.", base_name.to_lowercase().replace(' ', "-"));
+        Self { profiles, host_name, ip, port }
+    }
+
+    fn register(&self, daemon: &ServiceDaemon, profile: &PrinterProfile)
+        -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    {
+        // _universal._sub._ipp._tcp.local. parsed by split_sub_domain() into:
+        //   base type:  _ipp._tcp.local.         → found by all IPP clients
+        //   subtype:    _universal._sub._ipp._tcp.local. → macOS selects "AirPrint" automatically
+        let service_type = "_universal._sub._ipp._tcp.local.";
+        let ip_str = self.ip.to_string();
+
+        let mut props = HashMap::new();
+        props.insert("txtvers".to_string(), "1".to_string());
+        props.insert("pdl".to_string(),
+            crate::ipp::operations::SUPPORTED_DOCUMENT_FORMATS.join(","));
+        props.insert("rp".to_string(),       profile.resource.to_string());
+        props.insert("ty".to_string(),       profile.make_and_model.to_string());
+        props.insert("adminurl".to_string(), format!("http://{}:{}/", ip_str, self.port));
+        props.insert("UUID".to_string(),     profile.uuid.to_string());
+        props.insert("Color".to_string(),    "F".to_string());
+        props.insert("Duplex".to_string(),   "F".to_string());
+        props.insert("Fax".to_string(),      "F".to_string());
+        props.insert("Scan".to_string(),     "F".to_string());
+        props.insert("Copies".to_string(),   "F".to_string());
+        props.insert("PaperMax".to_string(), "legal-A4".to_string());
+        props.insert("note".to_string(),     "E-ink reader virtual printer".to_string());
+        props.insert("URF".to_string(),      "CP1,W8,RS300".to_string());
+
+        let info = ServiceInfo::new(
+            service_type,
+            &profile.name,
+            &self.host_name,
+            ip_str.as_str(),
+            self.port,
+            Some(props),
+        )?;
+        daemon.register(info)?;
+        Ok(())
+    }
+
+    fn instance_name(profile: &PrinterProfile) -> String {
+        format!("{}._ipp._tcp.local.", profile.name)
     }
 
     pub async fn start(
@@ -20,46 +68,10 @@ impl MdnsAdvertiser {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let daemon = ServiceDaemon::new()?;
 
-        // _universal._sub._ipp._tcp.local. parsed by split_sub_domain() into:
-        //   base type:  _ipp._tcp.local.         → found by all IPP clients
-        //   subtype:    _universal._sub._ipp._tcp.local. → macOS selects "AirPrint" automatically
-        let service_type  = "_universal._sub._ipp._tcp.local.";
-        let instance_name = format!("{}._ipp._tcp.local.", self.printer_name);
-        let host_name     = format!("{}.local.", self.printer_name.to_lowercase().replace(' ', "-"));
-        let ip_str        = self.ip.to_string();
-
-        let register = |daemon: &ServiceDaemon| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            let mut props = HashMap::new();
-            props.insert("txtvers".to_string(), "1".to_string());
-            props.insert("pdl".to_string(),
-                crate::ipp::operations::SUPPORTED_DOCUMENT_FORMATS.join(","));
-            props.insert("rp".to_string(),       "ipp/print".to_string());
-            props.insert("ty".to_string(),       "InkPrint Virtual Printer".to_string());
-            props.insert("adminurl".to_string(), format!("http://{}:{}/", ip_str, self.port));
-            props.insert("UUID".to_string(),     "a7d4b3e2-1c5f-4d8a-9e0b-2f6c8d3a1b4e".to_string());
-            props.insert("Color".to_string(),    "F".to_string());
-            props.insert("Duplex".to_string(),   "F".to_string());
-            props.insert("Fax".to_string(),      "F".to_string());
-            props.insert("Scan".to_string(),     "F".to_string());
-            props.insert("Copies".to_string(),   "F".to_string());
-            props.insert("PaperMax".to_string(), "legal-A4".to_string());
-            props.insert("note".to_string(),     "E-ink reader virtual printer".to_string());
-            props.insert("URF".to_string(),      "CP1,W8,RS300".to_string());
-
-            let info = ServiceInfo::new(
-                service_type,
-                &self.printer_name,
-                &host_name,
-                ip_str.as_str(),
-                self.port,
-                Some(props),
-            )?;
-            daemon.register(info)?;
-            Ok(())
-        };
-
-        register(&daemon)?;
-        log::info!("mDNS: registered '{}' on {}:{}", self.printer_name, self.ip, self.port);
+        for p in &self.profiles {
+            self.register(&daemon, p)?;
+            log::info!("mDNS: registered '{}' on {}:{}/{}", p.name, self.ip, self.port, p.resource);
+        }
 
         // Re-announce every 60 s so remote caches never expire between queries.
         // mdns-sd's SRV/A records have host_ttl = 120 s; clients send a refresh
@@ -74,18 +86,22 @@ impl MdnsAdvertiser {
                 biased;
                 _ = &mut shutdown => break,
                 _ = interval.tick() => {
-                    daemon.unregister(&instance_name).ok();
-                    if let Err(e) = register(&daemon) {
-                        log::warn!("mDNS re-announce failed: {}", e);
-                    } else {
-                        log::debug!("mDNS: re-announced '{}'", self.printer_name);
+                    for p in &self.profiles {
+                        daemon.unregister(&Self::instance_name(p)).ok();
+                        if let Err(e) = self.register(&daemon, p) {
+                            log::warn!("mDNS re-announce of '{}' failed: {}", p.name, e);
+                        } else {
+                            log::debug!("mDNS: re-announced '{}'", p.name);
+                        }
                     }
                 }
             }
         }
 
-        log::info!("mDNS: unregistering '{}'", self.printer_name);
-        daemon.unregister(&instance_name).ok();
+        for p in &self.profiles {
+            log::info!("mDNS: unregistering '{}'", p.name);
+            daemon.unregister(&Self::instance_name(p)).ok();
+        }
         daemon.shutdown()?;
 
         Ok(())

@@ -1,7 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
 
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -15,6 +14,8 @@ pub struct ServerConfig {
     pub port: u16,
     pub storage_dir: PathBuf,
     pub printer_name: String,
+    /// Also serve (and advertise) the "<name> EPUB" printer on /ipp/epub.
+    pub epub_enabled: bool,
     pub callback: Option<Arc<dyn PrintJobCallback>>,
 }
 
@@ -64,13 +65,11 @@ pub async fn start(config: ServerConfig) -> Result<ServerHandle, Box<dyn std::er
 
     std::fs::create_dir_all(&config.storage_dir)?;
 
-    let printer = Arc::new(PrinterState {
-        printer_uri: format!("ipp://{}:{}/ipp/print", local_ip, config.port),
-        printer_name: config.printer_name.clone(),
-        storage_dir: config.storage_dir,
-        job_counter: AtomicU32::new(1),
-        active_jobs: dashmap::DashMap::new(),
-    });
+    let printer = Arc::new(PrinterState::new(
+        &config.printer_name,
+        config.epub_enabled,
+        config.storage_dir,
+    ));
 
     // Bind the TCP listener HERE so bind errors are caught before returning Ok
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
@@ -88,7 +87,7 @@ pub async fn start(config: ServerConfig) -> Result<ServerHandle, Box<dyn std::er
     // This is handled in Rust (not Android NsdManager) so that subtype PTR records are
     // correct on all Android versions — NsdManager on API < 33 does not create proper
     // subtype PTR structure needed for macOS AirPrint auto-discovery.
-    let mdns = MdnsAdvertiser::new(config.printer_name.clone(), local_ip, config.port);
+    let mdns = MdnsAdvertiser::new(printer.profiles.clone(), &config.printer_name, local_ip, config.port);
     tokio::spawn(async move {
         if let Err(e) = mdns.start(mdns_rx).await {
             tracing::error!("mDNS error: {}", e);

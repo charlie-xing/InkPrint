@@ -58,6 +58,7 @@ async fn test_print_job_end_to_end() {
         port,
         storage_dir: dir.path().to_path_buf(),
         printer_name: "TestPrinter".to_string(),
+        epub_enabled: true,
         callback: None,
     };
 
@@ -120,6 +121,7 @@ async fn test_get_printer_attributes_http() {
         port,
         storage_dir: dir.path().to_path_buf(),
         printer_name: "TestPrinter2".to_string(),
+        epub_enabled: true,
         callback: None,
     };
 
@@ -164,4 +166,67 @@ async fn test_get_printer_attributes_http() {
     assert!(printer_group.get("printer-name").is_some());
 
     handle.stop();
+}
+
+fn get_printer_attributes_request(printer_uri: &str) -> Vec<u8> {
+    let mut buf = vec![1, 1];
+    buf.extend_from_slice(&0x000Bu16.to_be_bytes()); // GetPrinterAttributes
+    buf.extend_from_slice(&3u32.to_be_bytes());
+    buf.push(0x01);
+    for (tag, name, value) in [
+        (0x47u8, &b"attributes-charset"[..], &b"utf-8"[..]),
+        (0x48, b"attributes-natural-language", b"en"),
+        (0x45, b"printer-uri", printer_uri.as_bytes()),
+    ] {
+        buf.push(tag);
+        buf.extend_from_slice(&(name.len() as u16).to_be_bytes());
+        buf.extend_from_slice(name);
+        buf.extend_from_slice(&(value.len() as u16).to_be_bytes());
+        buf.extend_from_slice(value);
+    }
+    buf.push(0x03);
+    buf
+}
+
+/// The EPUB printer answers on its own path with its own identity, and the
+/// path is gone when the EPUB printer is disabled.
+#[tokio::test]
+async fn test_epub_printer_path() {
+    use inkprint_core::ipp::types::{DelimiterTag, IppValue};
+
+    for (port, enabled) in [(16312u16, true), (16313u16, false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let config = inkprint_core::server::listener::ServerConfig {
+            port,
+            storage_dir: dir.path().to_path_buf(),
+            printer_name: "Ink".to_string(),
+            epub_enabled: enabled,
+            callback: None,
+        };
+        let handle = inkprint_core::server::listener::start(config).await.unwrap();
+        sleep(Duration::from_millis(100)).await;
+
+        let uri = format!("ipp://127.0.0.1:{}/ipp/epub", port);
+        let resp = reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{}/ipp/epub", port))
+            .header("Content-Type", "application/ipp")
+            .body(get_printer_attributes_request(&uri))
+            .send()
+            .await
+            .unwrap();
+
+        if enabled {
+            assert_eq!(resp.status(), 200);
+            let bytes = resp.bytes().await.unwrap();
+            let ipp = inkprint_core::ipp::parser::parse_ipp_request(&bytes).unwrap();
+            let g = ipp.attribute_groups.iter()
+                .find(|g| g.delimiter == DelimiterTag::PrinterAttributes)
+                .unwrap();
+            assert_eq!(g.get("printer-name"), Some(&IppValue::NameWithoutLanguage("Ink EPUB".into())));
+            assert_eq!(g.get("printer-uri-supported"), Some(&IppValue::Uri(uri.clone())));
+        } else {
+            assert_eq!(resp.status(), 404);
+        }
+        handle.stop();
+    }
 }

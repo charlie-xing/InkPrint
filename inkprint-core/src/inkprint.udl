@@ -1,11 +1,46 @@
 namespace inkprint {
-    boolean start_server(u16 port, string storage_path, string printer_name, PrintJobListener? listener);
+    boolean start_server(u16 port, string storage_path, string printer_name, boolean epub_enabled, PrintJobListener? listener);
     boolean stop_server();
     string get_version();
     string get_local_ip();
+
+    // Whether this build can convert to EPUB at all.
+    boolean epub_supported();
+    [Throws=ConvertError]
+    ConversionStats convert_pdf_to_epub(string pdf_path, string epub_path, ConversionOptions options, ConversionProgress? progress);
+    // Stops the running conversion after its current page.
+    void cancel_conversion();
+    // Frees the layout/OCR models until the next conversion.
+    void release_models();
+};
+
+dictionary ConversionOptions {
+    string title;
+    string pdfium_lib;
+    string ort_lib;
+    string? models_dir;
+    boolean ocr;
+    u32 threads;
+};
+
+dictionary ConversionStats {
+    u32 pages;
+    u32 ocr_pages;
+    u32 image_pages;
+    boolean layout_model;
+};
+
+[Error]
+enum ConvertError { "Cancelled", "Failed" };
+
+[Trait, WithForeign]
+interface ConversionProgress {
+    void on_page(u32 done, u32 total);
 };
 
 [Trait, WithForeign]
 interface PrintJobListener {
-    void on_job_received(u32 job_id, string file_path, string file_name, u64 size_bytes);
+    void on_job_received(u32 job_id, string file_path, string file_name, u64 size_bytes, OutputFormat output);
 };
+
+enum OutputFormat { "Pdf", "Epub" };

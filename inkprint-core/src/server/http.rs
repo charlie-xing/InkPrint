@@ -31,19 +31,24 @@ impl HttpServer {
     ) -> Result<Response<Full<Bytes>>, hyper::Error> {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
+
+        // POST to one of the printers' paths (/ipp/print, /ipp/epub, or / for
+        // the PDF printer); a disabled EPUB printer's path is simply unknown.
+        let profile = match printer.profile_for_path(&path) {
+            Some(p) if method == Method::POST => p.clone(),
+            _ => {
+                tracing::debug!("Rejected request: {} {}", method, path);
+                return Ok(Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Full::new(Bytes::from("Not Found")))
+                    .unwrap());
+            }
+        };
         let printer_uri = printer_uri_for(
             req.headers().get(hyper::header::HOST).and_then(|v| v.to_str().ok()),
             local_addr,
+            profile.resource,
         );
-
-        // Only accept POST /ipp/print
-        if method != Method::POST || (path != "/ipp/print" && path != "/") {
-            tracing::debug!("Rejected request: {} {}", method, path);
-            return Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Full::new(Bytes::from("Not Found")))
-                .unwrap());
-        }
 
         // Check Content-Type
         let content_type = req.headers()
@@ -103,7 +108,7 @@ impl HttpServer {
 
         // Dispatch IPP operation
         let cb_ref: Option<&dyn PrintJobCallback> = callback.as_deref();
-        let response_bytes = dispatch(&ipp_request, &printer, &printer_uri, cb_ref);
+        let response_bytes = dispatch(&ipp_request, &printer, &profile, &printer_uri, cb_ref);
 
         Ok(Response::builder()
             .status(StatusCode::OK)
@@ -194,14 +199,15 @@ impl HttpServer {
 /// The printer URI as the client addressed it: taken from the `Host` header
 /// (so an IP, a Tailscale MagicDNS name or `.local` name all round-trip),
 /// else from the local address the connection arrived on. A Host without a
-/// port gets the port we are actually listening on.
-pub fn printer_uri_for(host: Option<&str>, local: SocketAddr) -> String {
+/// port gets the port we are actually listening on. `resource` is the
+/// addressed printer's path without the leading slash (`ipp/print`, ...).
+pub fn printer_uri_for(host: Option<&str>, local: SocketAddr, resource: &str) -> String {
     let authority = host
         .map(str::trim)
         .filter(|h| is_valid_authority(h))
         .map(|h| if has_port(h) { h.to_string() } else { format!("{}:{}", h, local.port()) })
         .unwrap_or_else(|| local.to_string());
-    format!("ipp://{}/ipp/print", authority)
+    format!("ipp://{}/{}", authority, resource)
 }
 
 /// `host[:port]` or `[v6]:port` with nothing that could break out of a URI.
@@ -226,20 +232,25 @@ mod tests {
 
     #[test]
     fn printer_uri_follows_host_header() {
-        assert_eq!(printer_uri_for(Some("100.70.177.81:6310"), local()), "ipp://100.70.177.81:6310/ipp/print");
-        assert_eq!(printer_uri_for(Some("xp.tail33a0b2.ts.net:6310"), local()), "ipp://xp.tail33a0b2.ts.net:6310/ipp/print");
-        assert_eq!(printer_uri_for(Some("[fd7a::1]:6310"), local()), "ipp://[fd7a::1]:6310/ipp/print");
+        assert_eq!(printer_uri_for(Some("100.70.177.81:6310"), local(), "ipp/print"), "ipp://100.70.177.81:6310/ipp/print");
+        assert_eq!(printer_uri_for(Some("xp.tail33a0b2.ts.net:6310"), local(), "ipp/print"), "ipp://xp.tail33a0b2.ts.net:6310/ipp/print");
+        assert_eq!(printer_uri_for(Some("[fd7a::1]:6310"), local(), "ipp/print"), "ipp://[fd7a::1]:6310/ipp/print");
     }
 
     #[test]
     fn printer_uri_adds_missing_port() {
-        assert_eq!(printer_uri_for(Some("inkprint.local"), local()), "ipp://inkprint.local:6310/ipp/print");
+        assert_eq!(printer_uri_for(Some("inkprint.local"), local(), "ipp/print"), "ipp://inkprint.local:6310/ipp/print");
     }
 
     #[test]
     fn printer_uri_falls_back_to_local_address() {
-        assert_eq!(printer_uri_for(None, local()), "ipp://192.168.2.5:6310/ipp/print");
-        assert_eq!(printer_uri_for(Some(""), local()), "ipp://192.168.2.5:6310/ipp/print");
-        assert_eq!(printer_uri_for(Some("evil/path?x"), local()), "ipp://192.168.2.5:6310/ipp/print");
+        assert_eq!(printer_uri_for(None, local(), "ipp/print"), "ipp://192.168.2.5:6310/ipp/print");
+        assert_eq!(printer_uri_for(Some(""), local(), "ipp/print"), "ipp://192.168.2.5:6310/ipp/print");
+        assert_eq!(printer_uri_for(Some("evil/path?x"), local(), "ipp/print"), "ipp://192.168.2.5:6310/ipp/print");
+    }
+
+    #[test]
+    fn printer_uri_uses_the_addressed_printer() {
+        assert_eq!(printer_uri_for(Some("10.0.0.2:6310"), local(), "ipp/epub"), "ipp://10.0.0.2:6310/ipp/epub");
     }
 }

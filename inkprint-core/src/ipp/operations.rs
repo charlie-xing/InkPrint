@@ -2,30 +2,39 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::types::*;
-use super::printer::{PrinterState, JobInfo, JobState};
+use super::printer::{PrinterState, PrinterProfile, JobInfo, JobState, OutputFormat};
 use super::response::{IppResponseBuilder, serialize_response, standard_operation_attrs};
 
 /// Callback when a print job completes
 pub trait PrintJobCallback: Send + Sync {
-    fn on_job_received(&self, job_id: u32, file_path: String, file_name: String, size_bytes: u64);
+    fn on_job_received(
+        &self,
+        job_id: u32,
+        file_path: String,
+        file_name: String,
+        size_bytes: u64,
+        output: OutputFormat,
+    );
 }
 
 /// Handle one IPP request. `printer_uri` is the printer's URI as this client
 /// reached it (see `server::http::printer_uri_for`); it is echoed back in
 /// printer-uri-supported, job-uri, etc. so every URI a client is handed
 /// works over the same network path it came in on (Wi-Fi, Tailscale, ...).
+/// `profile` is the printer (PDF or EPUB) the request's path addressed.
 pub fn dispatch(
     request: &IppRequest,
     printer: &Arc<PrinterState>,
+    profile: &PrinterProfile,
     printer_uri: &str,
     callback: Option<&dyn PrintJobCallback>,
 ) -> Vec<u8> {
     let mut response = match request.operation_id {
         IppOperationId::GetPrinterAttributes => {
-            handle_get_printer_attributes(request, printer, printer_uri)
+            handle_get_printer_attributes(request, profile, printer_uri)
         }
         IppOperationId::PrintJob => {
-            handle_print_job(request, printer, printer_uri, callback)
+            handle_print_job(request, printer, profile, printer_uri, callback)
         }
         IppOperationId::GetJobAttributes => {
             handle_get_job_attributes(request, printer, printer_uri)
@@ -65,7 +74,7 @@ pub const SUPPORTED_DOCUMENT_FORMATS: &[&str] = &["application/pdf", "image/urf"
 
 fn handle_get_printer_attributes(
     request: &IppRequest,
-    printer: &Arc<PrinterState>,
+    profile: &PrinterProfile,
     printer_uri: &str,
 ) -> IppResponse {
     // Determine which attributes were requested
@@ -114,13 +123,13 @@ fn handle_get_printer_attributes(
     if want("printer-name") {
         printer_group.add(IppAttribute::new(
             "printer-name",
-            IppValue::NameWithoutLanguage(printer.printer_name.clone()),
+            IppValue::NameWithoutLanguage(profile.name.clone()),
         ));
     }
     if want("printer-make-and-model") {
         printer_group.add(IppAttribute::new(
             "printer-make-and-model",
-            IppValue::TextWithoutLanguage("InkPrint Virtual PDF Printer".to_string()),
+            IppValue::TextWithoutLanguage(profile.make_and_model.to_string()),
         ));
     }
     if want("printer-state") {
@@ -339,7 +348,7 @@ fn handle_get_printer_attributes(
     if want("printer-info") {
         printer_group.add(IppAttribute::new(
             "printer-info",
-            IppValue::TextWithoutLanguage("InkPrint Virtual PDF Printer for e-ink reader".to_string()),
+            IppValue::TextWithoutLanguage(format!("{} for e-ink reader", profile.make_and_model)),
         ));
     }
     if want("printer-location") {
@@ -417,7 +426,7 @@ fn handle_get_printer_attributes(
     if want("printer-uuid") {
         printer_group.add(IppAttribute::new(
             "printer-uuid",
-            IppValue::Uri("urn:uuid:a7d4b3e2-1c5f-4d8a-9e0b-2f6c8d3a1b4e".to_string()),
+            IppValue::Uri(format!("urn:uuid:{}", profile.uuid)),
         ));
     }
     if want("urf-supported") {
@@ -440,6 +449,7 @@ fn handle_get_printer_attributes(
 fn handle_print_job(
     request: &IppRequest,
     printer: &Arc<PrinterState>,
+    profile: &PrinterProfile,
     printer_uri: &str,
     callback: Option<&dyn PrintJobCallback>,
 ) -> IppResponse {
@@ -551,6 +561,7 @@ fn handle_print_job(
         time_created: now,
         file_path: Some(file_path.clone()),
         size_bytes,
+        output: profile.output,
     });
 
     // Notify callback
@@ -560,6 +571,7 @@ fn handle_print_job(
             file_path.to_string_lossy().to_string(),
             filename.clone(),
             size_bytes,
+            profile.output,
         );
     }
 
@@ -804,16 +816,22 @@ fn error_response(request_id: u32, status: IppStatusCode, message: &str) -> IppR
 mod tests {
     use super::*;
     use crate::ipp::parser::parse_ipp_request;
-    use std::sync::atomic::AtomicU32;
+
+    const PDF_URI: &str = "ipp://127.0.0.1:631/ipp/print";
+    const EPUB_URI: &str = "ipp://127.0.0.1:631/ipp/epub";
+
+    /// Records what the print-job callback was handed.
+    #[derive(Default)]
+    struct Recorder(std::sync::Mutex<Vec<(u32, OutputFormat)>>);
+
+    impl PrintJobCallback for Recorder {
+        fn on_job_received(&self, job_id: u32, _: String, _: String, _: u64, output: OutputFormat) {
+            self.0.lock().unwrap().push((job_id, output));
+        }
+    }
 
     fn make_printer(dir: &std::path::Path) -> Arc<PrinterState> {
-        Arc::new(PrinterState {
-            printer_name: "InkPrint".to_string(),
-            printer_uri: "ipp://127.0.0.1:631/ipp/print".to_string(),
-            storage_dir: dir.to_path_buf(),
-            job_counter: AtomicU32::new(1),
-            active_jobs: dashmap::DashMap::new(),
-        })
+        Arc::new(PrinterState::new("InkPrint", true, dir.to_path_buf()))
     }
 
     fn build_request(op: u16, request_id: u32, op_attrs: Vec<(u8, &str, &[u8])>, doc_data: &[u8]) -> Vec<u8> {
@@ -851,7 +869,7 @@ mod tests {
             (0x45, "printer-uri", b"ipp://127.0.0.1:631/ipp/print"),
         ], b"");
         let req = parse_ipp_request(&raw).unwrap();
-        let resp_bytes = dispatch(&req, &printer, &printer.printer_uri, None);
+        let resp_bytes = dispatch(&req, &printer, &printer.profiles[0], PDF_URI, None);
         let resp = parse_ipp_request(&resp_bytes).unwrap();
 
         // Status OK
@@ -876,7 +894,7 @@ mod tests {
             (0x44, "requested-attributes", b"printer-name"),
         ], b"");
         let req = parse_ipp_request(&raw).unwrap();
-        let resp_bytes = dispatch(&req, &printer, &printer.printer_uri, None);
+        let resp_bytes = dispatch(&req, &printer, &printer.profiles[0], PDF_URI, None);
         let resp = parse_ipp_request(&resp_bytes).unwrap();
 
         let printer_group = resp.attribute_groups.iter()
@@ -903,7 +921,7 @@ mod tests {
         ], pdf_data);
 
         let req = parse_ipp_request(&raw).unwrap();
-        let resp_bytes = dispatch(&req, &printer, &printer.printer_uri, None);
+        let resp_bytes = dispatch(&req, &printer, &printer.profiles[0], PDF_URI, None);
         let resp = parse_ipp_request(&resp_bytes).unwrap();
 
         // Status OK
@@ -936,7 +954,7 @@ mod tests {
             (0x49, "document-format", b"application/pdf"),
         ], pdf_data);
         let req = parse_ipp_request(&raw).unwrap();
-        let resp_bytes = dispatch(&req, &printer, &printer.printer_uri, None);
+        let resp_bytes = dispatch(&req, &printer, &printer.profiles[0], PDF_URI, None);
         let resp = parse_ipp_request(&resp_bytes).unwrap();
         let job_id_val = resp.attribute_groups.iter()
             .find(|g| g.delimiter == DelimiterTag::JobAttributes)
@@ -952,7 +970,7 @@ mod tests {
             (0x21, "job-id", &job_id_bytes),
         ], b"");
         let req2 = parse_ipp_request(&raw2).unwrap();
-        let resp2_bytes = dispatch(&req2, &printer, &printer.printer_uri, None);
+        let resp2_bytes = dispatch(&req2, &printer, &printer.profiles[0], PDF_URI, None);
         let resp2 = parse_ipp_request(&resp2_bytes).unwrap();
 
         assert_eq!(u16::from(resp2.operation_id), 0x0000u16);
@@ -976,7 +994,7 @@ mod tests {
         ], b"%!PS-Adobe-3.0\n%%Pages: 1\n");
 
         let req = parse_ipp_request(&raw).unwrap();
-        let resp = parse_ipp_request(&dispatch(&req, &printer, &printer.printer_uri, None)).unwrap();
+        let resp = parse_ipp_request(&dispatch(&req, &printer, &printer.profiles[0], PDF_URI, None)).unwrap();
 
         assert_eq!(u16::from(resp.operation_id), 0x040Au16);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -994,7 +1012,7 @@ mod tests {
         ], b"\xEF\xBB\xBF%PDF-1.7 body");
 
         let req = parse_ipp_request(&raw).unwrap();
-        let resp = parse_ipp_request(&dispatch(&req, &printer, &printer.printer_uri, None)).unwrap();
+        let resp = parse_ipp_request(&dispatch(&req, &printer, &printer.profiles[0], PDF_URI, None)).unwrap();
 
         assert_eq!(u16::from(resp.operation_id), 0x0000u16);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
@@ -1015,7 +1033,7 @@ mod tests {
             (0x45, "printer-uri", b"ipp://127.0.0.1:631/ipp/print"),
             (0x49, "document-format", b"application/pdf"),
         ], b"%PDF-1.4 cancel test");
-        let resp = parse_ipp_request(&dispatch(&parse_ipp_request(&raw).unwrap(), printer, &printer.printer_uri, None)).unwrap();
+        let resp = parse_ipp_request(&dispatch(&parse_ipp_request(&raw).unwrap(), printer, &printer.profiles[0], PDF_URI, None)).unwrap();
         match resp.attribute_groups.iter()
             .find(|g| g.delimiter == DelimiterTag::JobAttributes)
             .and_then(|g| g.get("job-id")) {
@@ -1029,7 +1047,7 @@ mod tests {
             (0x45, "printer-uri", b"ipp://127.0.0.1:631/ipp/print"),
             attr,
         ], b"");
-        let resp = parse_ipp_request(&dispatch(&parse_ipp_request(&raw).unwrap(), printer, &printer.printer_uri, None)).unwrap();
+        let resp = parse_ipp_request(&dispatch(&parse_ipp_request(&raw).unwrap(), printer, &printer.profiles[0], PDF_URI, None)).unwrap();
         u16::from(resp.operation_id)
     }
 
@@ -1059,7 +1077,7 @@ mod tests {
         let printer = make_printer(dir.path());
         printer.active_jobs.insert(5, JobInfo {
             id: 5, state: JobState::Processing, name: "x".into(), originating_user: "u".into(),
-            time_created: 0, file_path: None, size_bytes: 0,
+            time_created: 0, file_path: None, size_bytes: 0, output: OutputFormat::Pdf,
         });
         assert_eq!(cancel(&printer, (0x21, "job-id", &5i32.to_be_bytes())), 0x0000);
         assert_eq!(printer.active_jobs.get(&5).unwrap().state, JobState::Canceled);
@@ -1073,7 +1091,44 @@ mod tests {
         let raw = build_request(0x000B, 30, vec![
             (0x45, "printer-uri", b"ipp://127.0.0.1:631/ipp/print"),
         ], b"");
-        let resp = parse_ipp_request(&dispatch(&parse_ipp_request(&raw).unwrap(), &printer, &printer.printer_uri, None)).unwrap();
+        let resp = parse_ipp_request(&dispatch(&parse_ipp_request(&raw).unwrap(), &printer, &printer.profiles[0], PDF_URI, None)).unwrap();
         assert_eq!(resp.version, IppVersion::IPP_1_1);
+    }
+
+    #[test]
+    fn test_epub_printer_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let printer = make_printer(dir.path());
+        let raw = build_request(0x000B, 1, vec![(0x45, "printer-uri", EPUB_URI.as_bytes())], b"");
+        let resp = parse_ipp_request(&dispatch(
+            &parse_ipp_request(&raw).unwrap(), &printer, &printer.profiles[1], EPUB_URI, None,
+        )).unwrap();
+        let g = resp.attribute_groups.iter()
+            .find(|g| g.delimiter == DelimiterTag::PrinterAttributes)
+            .unwrap();
+        assert_eq!(g.get("printer-name"), Some(&IppValue::NameWithoutLanguage("InkPrint EPUB".into())));
+        assert_eq!(g.get("printer-uri-supported"), Some(&IppValue::Uri(EPUB_URI.into())));
+        assert_eq!(
+            g.get("printer-uuid"),
+            Some(&IppValue::Uri(format!("urn:uuid:{}", crate::ipp::printer::EPUB_PRINTER_UUID))),
+        );
+    }
+
+    #[test]
+    fn test_print_job_reports_output_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let printer = make_printer(dir.path());
+        let rec = Recorder::default();
+        for (profile, uri) in [(&printer.profiles[0], PDF_URI), (&printer.profiles[1], EPUB_URI)] {
+            let raw = build_request(0x0002, 7, vec![
+                (0x45, "printer-uri", uri.as_bytes()),
+                (0x49, "document-format", b"application/pdf"),
+            ], b"%PDF-1.4 x");
+            dispatch(&parse_ipp_request(&raw).unwrap(), &printer, profile, uri, Some(&rec));
+        }
+        let got: Vec<OutputFormat> = rec.0.lock().unwrap().iter().map(|(_, f)| *f).collect();
+        assert_eq!(got, vec![OutputFormat::Pdf, OutputFormat::Epub]);
+        let epub_job = printer.active_jobs.iter().find(|j| j.output == OutputFormat::Epub).unwrap();
+        assert!(epub_job.file_path.as_ref().unwrap().exists());
     }
 }

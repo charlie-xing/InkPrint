@@ -9,7 +9,14 @@ authors = ["charlie-xing <xjohn1666@gmail.com>"]
 name = "inkprint_core"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
+[features]
+default = ["epub"]
+# PDF -> EPUB conversion (the "InkPrint EPUB" printer). Off for the F-Droid
+# build, which cannot ship the prebuilt pdfium / ONNX Runtime libraries.
+epub = ["dep:inkprint-epub"]
+
 [dependencies]
+inkprint-epub = { path = "../inkprint-epub", optional = true }
 tokio = { version = "1", features = ["full"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
@@ -18,7 +25,7 @@ mdns-sd = "0.11"
 uniffi = { version = "0.28", features = ["tokio"] }
 bytes = "1"
 chrono = "0.4"
-tracing = "0.1"
+tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dashmap = "6"
 thiserror = "2"
