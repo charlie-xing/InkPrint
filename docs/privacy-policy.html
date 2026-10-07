@@ -70,7 +70,7 @@
 <main>
 
   <h1>InkPrint Privacy Policy</h1>
-  <p class="dates">Effective 22 September 2026 · Last updated 22 September 2026</p>
+  <p class="dates">Effective 22 September 2026 · Last updated 7 October 2026</p>
   <p class="langs"><span>English</span> · <a href="privacy-policy.zh.html">中文</a></p>
 
   <p class="lede">
@@ -106,7 +106,7 @@
     <tr>
       <td>The documents you print</td>
       <td>They are the thing being printed</td>
-      <td>Saved as PDF files in the app's own folder and copied to the device's shared <code>Documents/InkPrint/</code> folder so your reader app can open them. They remain on the device until you delete them.</td>
+      <td>Saved as PDF files on the device. By default they are kept in the app's own folder and copied to the shared <code>Documents/InkPrint/</code> folder so your reader app can open them. If you choose a save folder in the app, documents are moved into that folder instead; InkPrint only gets access to the folder you pick, through the system folder picker. They remain on the device until you delete them.</td>
     </tr>
     <tr>
       <td>Document titles</td>
@@ -119,18 +119,20 @@
       <td>Held in memory only, for the duration of the job. Never written to storage, and discarded when the printer service stops.</td>
     </tr>
     <tr>
-      <td>Your device's local network (LAN) IP address</td>
+      <td>Your device's network IP addresses (Wi-Fi/Ethernet, and Tailscale or VPN if active)</td>
       <td>A printer has to announce an address for other devices to reach it</td>
-      <td>Shown in the app and broadcast over mDNS on your local network only. It is a private address that is not reachable from the internet.</td>
+      <td>Shown in the app so you know where to print. Only the local network address is broadcast, over mDNS, on your local network. These are private addresses that are not reachable from the public internet.</td>
     </tr>
   </table>
 
   <h2>Network behaviour</h2>
   <p>
     InkPrint listens for print jobs on your local network and announces itself over
-    mDNS on that same network. It does not connect to the internet, and it has no
+    mDNS on that same network. If your device is also on a private network such as
+    Tailscale or a VPN, devices on that network can reach the printer too. InkPrint
+    never initiates a connection: it does not connect to the internet, and it has no
     remote endpoint to connect to. The <code>INTERNET</code> permission Android
-    requires is used solely to open a listening socket on the local network.
+    requires is used solely to open a listening socket.
   </p>
 
   <h2>Permissions</h2>
@@ -157,21 +159,22 @@
   <p>
     Received documents stay on your device until you remove them. You can delete
     them with any file manager, or remove all of them at once by uninstalling the
-    app — note that files already copied into the shared
-    <code>Documents/InkPrint/</code> folder may survive uninstallation and can be
-    deleted manually.
+    app — note that files in the shared <code>Documents/InkPrint/</code> folder, or
+    in a save folder you chose, survive uninstallation and can be deleted manually.
+    InkPrint also lets you rename, move and delete received documents in the app.
   </p>
 
   <h2>Security</h2>
   <p>Please be aware of how InkPrint works so you can decide where to use it:</p>
   <ul>
     <li>Like most consumer network printers, InkPrint accepts print jobs from any
-        device on the same local network without a password. Use it on networks you
+        device on the same local network (or on a Tailscale/VPN network your device is
+        part of) without a password. Use it on networks you
         trust, and stop the service when you are not using it.</li>
     <li>Print traffic on the local network is not encrypted, which is normal for IPP
         printing but means it is only as private as the network you are on.</li>
     <li>Received documents are stored unencrypted on the device, in a shared folder
-        that other apps with storage access can read.</li>
+        (or the save folder you chose) that other apps with storage access can read.</li>
   </ul>
 
   <h2>Children</h2>

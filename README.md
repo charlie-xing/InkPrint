@@ -109,7 +109,7 @@ Without them the release build still succeeds, but the output is unsigned.
 InkPrint collects nothing: no accounts, no analytics, no servers, no outbound
 connections. Everything stays on the device and the local network.
 
-Privacy policy — [English](https://blog.xcl.name/InkPrint/privacy-policy.html) · [中文](https://blog.xcl.name/InkPrint/privacy-policy.zh.html)
+Privacy policy — [English](https://blog.xcl.name/privacy-policy.html) · [中文](https://blog.xcl.name/privacy-policy.zh.html)
 
 ---
 
