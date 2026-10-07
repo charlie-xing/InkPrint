@@ -162,22 +162,8 @@ pub fn convert_pdf_to_epub(
     #[cfg(target_os = "android")]
     init_android_logging();
 
-    struct Forward(Arc<dyn ConversionProgress>);
-    impl inkprint_epub::Progress for Forward {
-        fn on_page(&self, done: u32, total: u32) {
-            self.0.on_page(done, total);
-        }
-    }
-
-    let opts = inkprint_epub::Options {
-        title: options.title,
-        pdfium_lib: options.pdfium_lib,
-        ort_lib: options.ort_lib,
-        models_dir: options.models_dir.map(std::path::PathBuf::from),
-        ocr: options.ocr,
-        threads: options.threads.max(1) as usize,
-    };
-    let forward = progress.map(Forward);
+    let opts = epub_options(options);
+    let forward = progress.map(ForwardProgress);
     let started = std::time::Instant::now();
     match inkprint_epub::convert(
         pdf_path.as_ref(),
@@ -200,6 +186,74 @@ pub fn convert_pdf_to_epub(
             Err(ConvertError::Failed(e.to_string()))
         }
     }
+}
+
+pub struct SearchableStats {
+    pub pages: u32,
+    pub ocr_pages: u32,
+}
+
+#[cfg(feature = "epub")]
+fn epub_options(options: ConversionOptions) -> inkprint_epub::Options {
+    inkprint_epub::Options {
+        title: options.title,
+        pdfium_lib: options.pdfium_lib,
+        ort_lib: options.ort_lib,
+        models_dir: options.models_dir.map(std::path::PathBuf::from),
+        ocr: options.ocr,
+        threads: options.threads.max(1) as usize,
+    }
+}
+
+#[cfg(feature = "epub")]
+struct ForwardProgress(Arc<dyn ConversionProgress>);
+
+#[cfg(feature = "epub")]
+impl inkprint_epub::Progress for ForwardProgress {
+    fn on_page(&self, done: u32, total: u32) {
+        self.0.on_page(done, total);
+    }
+}
+
+#[cfg(feature = "epub")]
+pub fn make_pdf_searchable(
+    pdf_path: String,
+    out_path: String,
+    options: ConversionOptions,
+    progress: Option<Arc<dyn ConversionProgress>>,
+) -> Result<SearchableStats, ConvertError> {
+    #[cfg(target_os = "android")]
+    init_android_logging();
+
+    let opts = epub_options(options);
+    let forward = progress.map(ForwardProgress);
+    let started = std::time::Instant::now();
+    match inkprint_epub::make_searchable(
+        pdf_path.as_ref(),
+        out_path.as_ref(),
+        &opts,
+        forward.as_ref().map(|f| f as &dyn inkprint_epub::Progress),
+    ) {
+        Ok(s) => {
+            tracing::info!("OCR layer: {} in {:.1}s, {:?}", pdf_path, started.elapsed().as_secs_f64(), s);
+            Ok(SearchableStats { pages: s.pages, ocr_pages: s.ocr_pages })
+        }
+        Err(inkprint_epub::Error::Cancelled) => Err(ConvertError::Cancelled),
+        Err(e) => {
+            tracing::error!("OCR layer for {} failed: {}", pdf_path, e);
+            Err(ConvertError::Failed(e.to_string()))
+        }
+    }
+}
+
+#[cfg(not(feature = "epub"))]
+pub fn make_pdf_searchable(
+    _pdf_path: String,
+    _out_path: String,
+    _options: ConversionOptions,
+    _progress: Option<Arc<dyn ConversionProgress>>,
+) -> Result<SearchableStats, ConvertError> {
+    Err(ConvertError::Failed("this build has no OCR support".into()))
 }
 
 #[cfg(not(feature = "epub"))]

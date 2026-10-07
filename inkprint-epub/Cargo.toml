@@ -17,6 +17,7 @@ ocr = ["dep:oar-ocr", "dep:ort"]
 pdfium-render = { version = "0.9", default-features = false, features = ["pdfium_latest", "image_latest", "thread_safe"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
+lopdf = { version = "0.45", default-features = false }
 thiserror = "2"
 tracing = "0.1"
 # oar-ocr pins ort exactly; `load-dynamic` makes ort dlopen libonnxruntime at

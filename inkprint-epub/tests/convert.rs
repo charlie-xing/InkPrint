@@ -128,3 +128,50 @@ fn scanned_magazine_page() {
     // Body text, not a table cut out as a picture.
     assert!(!html.contains("<img src=\"images/p1-"), "{html}");
 }
+
+/// Text of every page as pdfium reads it (spaces dropped).
+fn pdf_text(opts: &Options, pdf: &Path) -> String {
+    let pdfium = inkprint_epub::pdf::pdfium(&opts.pdfium_lib).unwrap();
+    let doc = pdfium.load_pdf_from_file(pdf, None).unwrap();
+    let mut all = String::new();
+    for page in doc.pages().iter() {
+        for l in inkprint_epub::pdf::analyze(&page, 1.0).lines {
+            all.push_str(&l.text);
+        }
+    }
+    all.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// A scan gets an invisible text layer readers can select and search; the
+/// page looks exactly the same.
+#[test]
+fn scan_becomes_searchable() {
+    let Some(opts) = options(true) else { return eprintln!("skipped: INKPRINT_ORT/INKPRINT_MODELS not set") };
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("searchable.pdf");
+    let stats = inkprint_epub::make_searchable(&fixture("magazine-zh-hant.pdf"), &out, &opts, None).unwrap();
+    assert_eq!((stats.pages, stats.ocr_pages), (1, 1));
+    assert!(pdf_text(&opts, &fixture("magazine-zh-hant.pdf")).is_empty());
+    let text = pdf_text(&opts, &out);
+    assert!(text.contains("衝浪者說了什麼嗎？"), "{text}");
+    assert!(text.contains("如今，經常聽到人們"), "{text}");
+
+    // Same pixels as the original.
+    let pdfium = inkprint_epub::pdf::pdfium(&opts.pdfium_lib).unwrap();
+    let render = |p: &Path| {
+        let doc = pdfium.load_pdf_from_file(p, None).unwrap();
+        let page = doc.pages().get(0).unwrap();
+        inkprint_epub::pdf::render(&page, 0.5).unwrap()
+    };
+    assert!(render(&fixture("magazine-zh-hant.pdf")) == render(&out), "the text layer must not show");
+}
+
+/// A PDF with a complete text layer needs no OCR.
+#[test]
+fn text_pdf_needs_no_layer() {
+    let Some(opts) = options(true) else { return eprintln!("skipped: INKPRINT_ORT/INKPRINT_MODELS not set") };
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("policy.pdf");
+    let stats = inkprint_epub::make_searchable(&fixture("policy-zh.pdf"), &out, &opts, None).unwrap();
+    assert_eq!((stats.pages, stats.ocr_pages), (4, 0));
+}

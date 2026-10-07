@@ -8,6 +8,9 @@ namespace inkprint {
     boolean epub_supported();
     [Throws=ConvertError]
     ConversionStats convert_pdf_to_epub(string pdf_path, string epub_path, ConversionOptions options, ConversionProgress? progress);
+    // Copies a PDF with an invisible OCR text layer on its scanned pages.
+    [Throws=ConvertError]
+    SearchableStats make_pdf_searchable(string pdf_path, string out_path, ConversionOptions options, ConversionProgress? progress);
     // Stops the running conversion after its current page.
     void cancel_conversion();
     // Frees the layout/OCR models until the next conversion.
@@ -28,6 +31,11 @@ dictionary ConversionStats {
     u32 ocr_pages;
     u32 image_pages;
     boolean layout_model;
+};
+
+dictionary SearchableStats {
+    u32 pages;
+    u32 ocr_pages;
 };
 
 [Error]

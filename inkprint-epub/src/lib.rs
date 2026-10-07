@@ -16,6 +16,8 @@ pub mod text;
 
 #[cfg(feature = "ocr")]
 mod engine;
+#[cfg(feature = "ocr")]
+mod searchable;
 #[doc(hidden)]
 pub mod pdf;
 
@@ -169,6 +171,64 @@ pub fn convert(pdf: &Path, out: &Path, opts: &Options, progress: Option<&dyn Pro
             Err(e)
         }
     }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct SearchableStats {
+    pub pages: u32,
+    /// Pages that got a text layer.
+    pub ocr_pages: u32,
+}
+
+/// Copies `pdf` to `out` with an invisible OCR text layer on every page that
+/// lacks text — scans, or text printed as outlines — so the PDF looks the
+/// same but its text can be selected and searched. Pages whose text layer
+/// is complete are left as they are. Needs the OCR models.
+#[cfg(feature = "ocr")]
+pub fn make_searchable(pdf: &Path, out: &Path, opts: &Options, progress: Option<&dyn Progress>) -> Result<SearchableStats, Error> {
+    CANCEL.store(false, Ordering::SeqCst);
+    let engine = load_engine(opts).ok_or_else(|| Error::Model("OCR models unavailable".into()))?;
+    let pdfium = pdf::pdfium(&opts.pdfium_lib)?;
+    let doc = pdfium
+        .load_pdf_from_file(pdf, None)
+        .map_err(|e| Error::Pdf(format!("cannot open {}: {e}", pdf.display())))?;
+    let total = doc.pages().len() as u32;
+    let mut layers = Vec::new();
+    for (i, page) in doc.pages().iter().enumerate() {
+        if CANCEL.load(Ordering::SeqCst) {
+            return Err(Error::Cancelled);
+        }
+        let scale = (DPI / 72.0).min(MAX_RENDER_PX / page.width().value.max(1.0));
+        let info = pdf::analyze(&page, scale);
+        let picture_area: f32 = info.images.iter().map(|r| r.area()).sum();
+        let picture_only = info.chars < MIN_TEXT_CHARS && (info.chars == 0 || picture_area > 0.5 * info.bounds.area());
+        let bitmap = pdf::render(&page, scale)?;
+        let needs_ocr = picture_only || {
+            let model = layout_regions(Some(&engine), &bitmap, i);
+            model.as_ref().is_some_and(|m| layout::text_layer_has_gaps(m, &info.lines, &info.bounds))
+                || unexplained_ink(&bitmap, &info.lines, &info.images) > UNEXPLAINED_INK
+        };
+        if needs_ocr {
+            if let Some(ocr) = ocr_lines(Some(&engine), opts, &bitmap, scale, i) {
+                // Only what the text layer doesn't already have.
+                let lines: Vec<text::Line> = layout::merge_ocr(info.lines.clone(), ocr).split_off(info.lines.len());
+                if !lines.is_empty() {
+                    layers.push(searchable::PageText { index: i, scale, lines });
+                }
+            }
+        }
+        if let Some(cb) = progress {
+            cb.on_page(i as u32 + 1, total);
+        }
+    }
+    drop(doc);
+    let part = out.with_extension("pdf.part");
+    let written = searchable::write(pdf, &part, &layers).and_then(|_| Ok(std::fs::rename(&part, out)?));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    written?;
+    Ok(SearchableStats { pages: total, ocr_pages: layers.len() as u32 })
 }
 
 /// Debugging aid: the regions of one page, in reading order, as
