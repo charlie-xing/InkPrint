@@ -1,0 +1,2 @@
+- New "InkPrint EPUB" printer: print to it to get a reflowable e-book instead of a PDF, rebuilt on the device, with on-device OCR for scanned pages (Google Play and GitHub builds only; the F-Droid build does not include it)
+- Smaller native library

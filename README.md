@@ -1,7 +1,8 @@
 # InkPrint
 
 Turn your BOOX (or any Android e-ink reader) into a wireless network printer.  
-Documents printed from any device on your LAN are saved as PDF directly to the BOOX.
+Documents printed from any device on your LAN are saved as PDF directly to the BOOX —
+or, through the **InkPrint EPUB** printer, as a reflowable e-book.
 
 | macOS — print to InkPrint from Chrome | Android app — file received |
 |:---:|:---:|
@@ -68,16 +69,23 @@ macOS / Windows / Linux / iOS / Android
 ## Build
 
 ```bash
-# 1. Build Rust .so for Android arm64
-make rust-build-android
+# Rust .so, UniFFI bindings, pdfium download (checksum-verified), debug APK
+make android-debug
 
-# 2. Build APK
-cd android
-JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew assembleDebug
-
-# 3. Install on device
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+# Install on device
+adb install -r android/app/build/outputs/apk/full/debug/app-full-debug.apk
 ```
+
+The app has two flavors:
+
+| Flavor | EPUB printer | Native deps | Build |
+|---|---|---|---|
+| `full` (Play, GitHub releases) | yes | pdfium (`make fetch-native-deps`), ONNX Runtime (Maven AAR), models in `android/app/src/full/assets/models/` | `make android-release` / `make android-bundle` |
+| `fdroid` | no | none — Rust core built with `--no-default-features` | `make android-fdroid` |
+
+Tests: `make rust-test` runs everything that needs no native libraries;
+`make epub-test` (macOS arm64) downloads pdfium and ONNX Runtime and also runs
+the end-to-end PDF → EPUB conversions.
 
 > **Note:** Use the rustup nightly toolchain (`RUSTC=~/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustc`).  
 > Homebrew's `rustc` does not include Android targets.
@@ -87,7 +95,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 Google Play accepts an Android App Bundle, not an APK:
 
 ```bash
-make android-bundle   # -> android/app/build/outputs/bundle/release/app-release.aab
+make android-bundle   # -> android/app/build/outputs/bundle/fullRelease/app-full-release.aab
 ```
 
 Signing credentials are read from Gradle properties or the environment and are
@@ -107,7 +115,9 @@ Without them the release build still succeeds, but the output is unsigned.
 ## Privacy
 
 InkPrint collects nothing: no accounts, no analytics, no servers, no outbound
-connections. Everything stays on the device and the local network.
+connections. Everything stays on the device and the local network — including
+the EPUB printer's layout analysis and text recognition, whose models ship
+inside the app.
 
 Privacy policy — [English](https://blog.xcl.name/privacy-policy.html) · [中文](https://blog.xcl.name/privacy-policy.zh.html)
 
@@ -119,6 +129,28 @@ Privacy policy — [English](https://blog.xcl.name/privacy-policy.html) · [中�
 2. Open InkPrint and tap **Start Printer Service**
 3. Add the printer on your computer/phone (see below)
 4. Print — the PDF appears in the app's file list and in `Documents/InkPrint/` (or your chosen save folder) on the BOOX
+
+---
+
+## EPUB printer
+
+Next to **InkPrint**, the app offers a second printer, **InkPrint EPUB**
+(`ipp://<device>:6310/ipp/epub`). Print to it and the BOOX turns the document
+into a reflowable EPUB in the background — the notification shows the page
+being converted and has a Cancel button.
+
+- **Text-layer PDFs** (almost anything printed from a computer) are rebuilt from
+  their text: headings, paragraphs, lists, and pictures in reading order.
+  About 0.6 s per page on a BOOX Note Air (Snapdragon 636).
+- **Scanned pages** go through on-device OCR (PaddleOCR PP-OCRv6 tiny), about
+  3 s per page. Switch *Recognise scanned pages* off to keep them as pictures.
+- **Tables, charts and formulas** are kept as pictures (grayscale, cut from the page).
+- Running headers, footers and page numbers are dropped; paragraphs split by a
+  page break are joined; long documents are split into chapters.
+
+The EPUB replaces the PDF unless *Also keep the PDF* is on. If a conversion
+fails or is cancelled, the PDF is saved instead. Turning the EPUB printer off
+removes it from the network. The F-Droid build does not include it.
 
 ---
 
@@ -247,11 +279,15 @@ inkprint/
 │   │   └── mdns/           # mDNS advertiser (mdns-sd, pure Rust)
 │   ├── inkprint.udl        # UniFFI interface definition
 │   └── Cargo.toml
+├── inkprint-epub/          # PDF → EPUB: pdfium, layout + OCR (oar-ocr / ONNX Runtime), EPUB writer
+├── design/                 # Design notes (epub-export.md)
+├── spikes/ocr-bench/       # On-device OCR benchmark used for performance regressions
 ├── android/                # Android app
 │   └── app/src/main/
 │       ├── kotlin/com/inkprint/app/
 │       │   ├── MainActivity.kt     # Compose UI
 │       │   ├── PrinterService.kt   # Foreground service
+│       │   ├── ConversionQueue.kt  # Background PDF → EPUB conversion
 │       │   ├── BootReceiver.kt     # Auto-start on boot
 │       │   └── InkPrintLib.kt      # UniFFI wrapper
 │       └── jniLibs/arm64-v8a/     # Compiled .so files
@@ -267,6 +303,8 @@ inkprint/
 - **mDNS from Rust** — Android's `NsdManager` API (< API 33) cannot register `_universal._sub._ipp._tcp` subtypes required for AirPrint auto-selection. The Rust `mdns-sd` crate advertises both `_ipp._tcp` and `_universal._sub._ipp._tcp` correctly
 - **PDF-only storage** — the `cupsFilter2` PPD directive and IPP `document-format-accepted` list guide clients to send PDF; raw PostScript is accepted and stored but not rendered
 - **UniFFI bridge** — Rust callbacks (`PrintJobCallback`) are implemented in Kotlin and called from the IPP job handler when a file is fully received
+- **Two printers, one port** — `/ipp/print` (PDF) and `/ipp/epub` (EPUB) differ in name, UUID and output; the job callback tells Kotlin which one received the file
+- **EPUB conversion** — `inkprint-epub` loads `libpdfium.so` and `libonnxruntime.so` at runtime (pdfium-render binding, `ort` load-dynamic), so the Rust build never links them. See `design/epub-export.md`
 
 ---
 
