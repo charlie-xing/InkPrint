@@ -1,0 +1,17 @@
+[package]
+name = "ocr-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone P0 spike: not part of the main workspace.
+[workspace]
+
+[dependencies]
+oar-ocr = { version = "0.10", default-features = false }
+image = "0.25"
+pdfium-render = "0.9"
+
+[features]
+# Host runs (macOS) use ort's prebuilt binaries; Android links the AAR's .so.
+host = ["oar-ocr/download-binaries"]

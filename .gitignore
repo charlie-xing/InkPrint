@@ -31,3 +31,6 @@ docs/prompts.md
 android/inkprint-release.jks
 *.jks
 *.keystore
+
+# Standalone spike crates
+spikes/*/target/
