@@ -314,7 +314,7 @@ class MainActivity : ComponentActivity() {
             Spacer(Modifier.height(12.dp))
 
             // Collapsible help
-            AddPrinterInstructionsCard(addresses = addresses, port = port.toString())
+            AddPrinterInstructionsCard(addresses = addresses, port = port.toString(), epub = epubPrinter)
 
             Spacer(Modifier.height(16.dp))
 
@@ -605,7 +605,7 @@ internal fun formatSize(bytes: Long): String = when {
 // ── Collapsible instructions card ────────────────────────────────────────────
 
 @Composable
-fun AddPrinterInstructionsCard(addresses: List<PrinterAddress>, port: String) {
+fun AddPrinterInstructionsCard(addresses: List<PrinterAddress>, port: String, epub: Boolean) {
     var expanded by remember { mutableStateOf(false) }
     // Which network the steps are written for; defaults to the first (Wi-Fi when present)
     var selectedLabel by remember { mutableStateOf<String?>(null) }
@@ -640,10 +640,10 @@ fun AddPrinterInstructionsCard(addresses: List<PrinterAddress>, port: String) {
                         "Always choose the driverless option (AirPrint, IPP Everywhere, IPP Class Driver) — InkPrint only accepts PDF.",
                         fontSize = 12.sp, color = Color.Gray
                     )
-                    if (BuildConfig.EPUB) {
+                    if (epub) {
                         Text(
-                            "With the EPUB printer on, a second printer \"InkPrint EPUB\" appears next to \"InkPrint\" — add it the same way. " +
-                            "When adding it by address, replace /ipp/print with /ipp/epub in the steps below.",
+                            "There are two printers: \"InkPrint\" saves a PDF, \"InkPrint EPUB\" saves a reflowable e-book. " +
+                            "Add one or both — each step below says how to add the EPUB printer too.",
                             fontSize = 12.sp, color = Color.Gray
                         )
                     }
@@ -659,11 +659,11 @@ fun AddPrinterInstructionsCard(addresses: List<PrinterAddress>, port: String) {
                             }
                         }
                     }
-                    OsSection("macOS")   { MacOsInstructions(ip, port) }
-                    OsSection("Windows") { WindowsInstructions(ip, port) }
-                    OsSection("Linux")   { LinuxInstructions(ip, port) }
-                    OsSection("iOS / iPadOS") { IosInstructions() }
-                    OsSection("Android") { AndroidInstructions(ip, port) }
+                    OsSection("macOS")   { MacOsInstructions(ip, port, epub) }
+                    OsSection("Windows") { WindowsInstructions(ip, port, epub) }
+                    OsSection("Linux")   { LinuxInstructions(ip, port, epub) }
+                    OsSection("iOS / iPadOS") { IosInstructions(epub) }
+                    OsSection("Android") { AndroidInstructions(ip, port, epub) }
                 }
             }
         }
@@ -703,7 +703,7 @@ fun OsSection(title: String, content: @Composable () -> Unit) {
 // ── OS instruction panels ────────────────────────────────────────────────────
 
 @Composable
-fun MacOsInstructions(ip: String, port: String) {
+fun MacOsInstructions(ip: String, port: String, epub: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 
         InfoBadge("✅ Recommended — Auto-discovery (AirPrint)")
@@ -713,8 +713,9 @@ fun MacOsInstructions(ip: String, port: String) {
         )
         Step(1, "Apple menu → System Settings → Printers & Scanners")
         Step(2, "Click Add Printer, Scanner or Fax…")
-        Step(3, "InkPrint appears in the list — select it")
+        Step(3, if (epub) "InkPrint and InkPrint EPUB appear in the list — select one" else "InkPrint appears in the list — select it")
         Step(4, "Use: AirPrint is selected automatically → click Add")
+        if (epub) Step(5, "To add the other printer too, repeat steps 2–4")
 
         HorizontalDivider()
 
@@ -722,7 +723,11 @@ fun MacOsInstructions(ip: String, port: String) {
         CodeBlock(
             "lpadmin -p InkPrint -E \\\n" +
             "  -v ipp://$ip:$port/ipp/print \\\n" +
-            "  -m everywhere"
+            "  -m everywhere" +
+            if (epub) "\n\n# EPUB printer\n" +
+                "lpadmin -p InkPrint-EPUB -E \\\n" +
+                "  -v ipp://$ip:$port/ipp/epub \\\n" +
+                "  -m everywhere" else ""
         )
         Text(
             "Don't add it with \"Generic PostScript Printer\": that sends PostScript, and InkPrint only accepts PDF.",
@@ -732,13 +737,14 @@ fun MacOsInstructions(ip: String, port: String) {
 }
 
 @Composable
-fun WindowsInstructions(ip: String, port: String) {
+fun WindowsInstructions(ip: String, port: String, epub: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 
         InfoBadge("✅ Automatic")
         Step(1, "Settings → Bluetooth & devices → Printers & scanners")
-        Step(2, "Click Add device — InkPrint appears on the same network")
-        Step(3, "Click Add device to confirm")
+        Step(2, if (epub) "Click Add device — InkPrint and InkPrint EPUB appear on the same network"
+                else "Click Add device — InkPrint appears on the same network")
+        Step(3, if (epub) "Click Add device next to the one you want (or both)" else "Click Add device to confirm")
         Text(
             "If InkPrint doesn't show up, add it by IP address below.",
             fontSize = 12.sp, color = Color.Gray
@@ -752,8 +758,9 @@ fun WindowsInstructions(ip: String, port: String) {
         Step(3, "Select \"Add a printer using an IP address or hostname\"")
         Step(4, "Protocol: IPP  /  Hostname or IP address:")
         CodeBlock("$ip")
-        Step(5, "Port number: $port  /  Queue: ipp/print")
+        Step(5, "Port number: $port  /  Queue: ipp/print" + if (epub) "  (EPUB printer: ipp/epub)" else "")
         Step(6, "Driver: Microsoft IPP Class Driver — then click Next to finish")
+        if (epub) Step(7, "For the EPUB printer, repeat with Queue: ipp/epub and name it InkPrint EPUB")
         Text(
             "Don't pick Generic / Text Only or a PostScript driver: they don't send PDF, and the job is rejected.",
             fontSize = 12.sp, color = Color(0xFFBF360C)
@@ -762,7 +769,7 @@ fun WindowsInstructions(ip: String, port: String) {
 }
 
 @Composable
-fun LinuxInstructions(ip: String, port: String) {
+fun LinuxInstructions(ip: String, port: String, epub: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 
         InfoBadge("✅ CUPS — IPP Everywhere (recommended)")
@@ -772,6 +779,10 @@ fun LinuxInstructions(ip: String, port: String) {
             "sudo lpadmin -p InkPrint -E \\\n" +
             "  -v ipp://$ip:$port/ipp/print \\\n" +
             "  -m everywhere\n\n" +
+            (if (epub) "# EPUB printer\n" +
+                "sudo lpadmin -p InkPrint-EPUB -E \\\n" +
+                "  -v ipp://$ip:$port/ipp/epub \\\n" +
+                "  -m everywhere\n\n" else "") +
             "# Set as default (optional)\n" +
             "sudo lpoptions -d InkPrint\n\n" +
             "# Print a file\n" +
@@ -784,6 +795,10 @@ fun LinuxInstructions(ip: String, port: String) {
         Step(1, "Settings → Printers → Add a Printer")
         Step(2, "Enter the IPP address manually:")
         CodeBlock("ipp://$ip:$port/ipp/print")
+        if (epub) {
+            Text("EPUB printer:", fontSize = 12.sp, color = Color.Gray)
+            CodeBlock("ipp://$ip:$port/ipp/epub")
+        }
         Step(3, "Driver: IPP Everywhere (driverless) → Apply")
         Text(
             "Don't pick a Generic, PostScript or vendor driver: those don't send PDF.",
@@ -793,7 +808,7 @@ fun LinuxInstructions(ip: String, port: String) {
 }
 
 @Composable
-fun IosInstructions() {
+fun IosInstructions(epub: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 
         InfoBadge("✅ AirPrint — Zero configuration")
@@ -805,8 +820,10 @@ fun IosInstructions() {
         Step(2, "Connect your iPhone/iPad to the same WiFi network")
         Step(3, "Open any app (Safari, Files, Mail, Photos…)")
         Step(4, "Tap the Share button  →  Print")
-        Step(5, "Tap Select Printer — InkPrint appears automatically")
-        Step(6, "Tap Print — the file is saved on the BOOX as PDF")
+        Step(5, if (epub) "Tap Select Printer — InkPrint and InkPrint EPUB appear automatically"
+                else "Tap Select Printer — InkPrint appears automatically")
+        Step(6, if (epub) "Tap Print — InkPrint saves a PDF on the BOOX, InkPrint EPUB an e-book"
+                else "Tap Print — the file is saved on the BOOX as PDF")
 
         HorizontalDivider()
 
@@ -819,7 +836,7 @@ fun IosInstructions() {
 }
 
 @Composable
-fun AndroidInstructions(ip: String, port: String) {
+fun AndroidInstructions(ip: String, port: String, epub: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 
         InfoBadge("✅ Built-in Android Print Service")
@@ -827,8 +844,9 @@ fun AndroidInstructions(ip: String, port: String) {
         Step(1, "Start InkPrint service on BOOX and connect to the same WiFi")
         Step(2, "Settings → Connected devices → Connection preferences → Printing")
         Step(3, "Tap Default Print Service → Enable it")
-        Step(4, "InkPrint should appear automatically")
-        Step(5, "In any app, open Share / Print menu → select InkPrint")
+        Step(4, if (epub) "InkPrint and InkPrint EPUB should appear automatically" else "InkPrint should appear automatically")
+        Step(5, if (epub) "In any app, open Share / Print menu → select InkPrint or InkPrint EPUB"
+                else "In any app, open Share / Print menu → select InkPrint")
 
         HorizontalDivider()
 
@@ -837,6 +855,12 @@ fun AndroidInstructions(ip: String, port: String) {
         Step(1, "In Default Print Service, tap ⋮ → Add printer")
         Step(2, "Add printer by IP address, and enter (with the port):")
         CodeBlock("$ip:$port")
+        if (epub) {
+            Text(
+                "Adding by IP only reaches the PDF printer — Android can't take a printer path. Use auto-discovery for InkPrint EPUB.",
+                fontSize = 12.sp, color = Color.Gray
+            )
+        }
     }
 }
 

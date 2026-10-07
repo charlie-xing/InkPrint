@@ -119,7 +119,7 @@ connections. Everything stays on the device and the local network — including
 the EPUB printer's layout analysis and text recognition, whose models ship
 inside the app.
 
-Privacy policy — [English](https://blog.xcl.name/privacy-policy.html) · [中文](https://blog.xcl.name/privacy-policy.zh.html)
+Privacy policy — [English](docs/privacy-policy.html) · [中文](docs/privacy-policy.zh.html)
 
 ---
 
@@ -156,11 +156,16 @@ removes it from the network. The F-Droid build does not include it.
 
 ## Adding the printer
 
+There are two printers: **InkPrint** saves a PDF, **InkPrint EPUB** saves a
+reflowable e-book (`/ipp/print` and `/ipp/epub` on port 6310). Add one or both;
+each platform below covers both.
+
 ### macOS (AirPrint — recommended)
 
 1. **System Settings → Printers & Scanners → Add Printer, Scanner or Fax…**
-2. InkPrint appears in the list automatically
+2. InkPrint and InkPrint EPUB appear in the list automatically — select one
 3. **Use: AirPrint** is selected — click **Add**
+4. Repeat for the other printer if you want both
 
 No driver download needed. Works on macOS Ventura, Sonoma, and Sequoia.
 
@@ -169,6 +174,11 @@ No driver download needed. Works on macOS Ventura, Sonoma, and Sequoia.
 ```bash
 lpadmin -p InkPrint -E \
   -v ipp://<ANDROID_IP>:6310/ipp/print \
+  -m everywhere
+
+# EPUB printer
+lpadmin -p InkPrint-EPUB -E \
+  -v ipp://<ANDROID_IP>:6310/ipp/epub \
   -m everywhere
 ```
 
@@ -181,8 +191,8 @@ lpadmin -p InkPrint -E \
 **Automatic:**
 
 1. Settings → Bluetooth & devices → Printers & scanners
-2. Click **Add device** — InkPrint appears on the same network
-3. Click **Add device** to confirm
+2. Click **Add device** — InkPrint and InkPrint EPUB appear on the same network
+3. Click **Add device** next to the one you want (or both)
 
 If InkPrint doesn't show up, add it manually:
 
@@ -190,8 +200,9 @@ If InkPrint doesn't show up, add it manually:
 
 1. Settings → Printers & scanners → Add device
 2. "The printer that I want isn't listed" → Add a printer using an IP address or hostname
-3. Protocol: **IPP** / Hostname: `<ANDROID_IP>` / Port: `6310` / Queue: `ipp/print`
+3. Protocol: **IPP** / Hostname: `<ANDROID_IP>` / Port: `6310` / Queue: `ipp/print` (EPUB printer: `ipp/epub`)
 4. Driver: **Microsoft IPP Class Driver**
+5. For the EPUB printer, repeat with Queue `ipp/epub` and name it *InkPrint EPUB*
 
 > Don't pick a "Generic / Text Only" or PostScript driver: those send text or PostScript instead of PDF, and InkPrint rejects the job.
 
@@ -207,6 +218,11 @@ sudo lpadmin -p InkPrint -E \
   -v ipp://<ANDROID_IP>:6310/ipp/print \
   -m everywhere
 
+# EPUB printer
+sudo lpadmin -p InkPrint-EPUB -E \
+  -v ipp://<ANDROID_IP>:6310/ipp/epub \
+  -m everywhere
+
 # Set as default (optional)
 sudo lpoptions -d InkPrint
 
@@ -216,7 +232,7 @@ lp -d InkPrint /path/to/document.pdf
 
 Works on Ubuntu, Debian, Fedora, Arch, and any distro with CUPS.
 
-**GNOME / KDE GUI:** Settings → Printers → Add a Printer → enter `ipp://<ANDROID_IP>:6310/ipp/print` → driver **IPP Everywhere** (driverless). Don't pick a Generic, PostScript or vendor driver: those don't send PDF.
+**GNOME / KDE GUI:** Settings → Printers → Add a Printer → enter `ipp://<ANDROID_IP>:6310/ipp/print` (EPUB printer: `.../ipp/epub`) → driver **IPP Everywhere** (driverless). Don't pick a Generic, PostScript or vendor driver: those don't send PDF.
 
 ---
 
@@ -224,8 +240,8 @@ Works on Ubuntu, Debian, Fedora, Arch, and any distro with CUPS.
 
 1. Connect iPhone/iPad to the **same WiFi network** as the BOOX(ANDROID)
 2. In any app: **Share → Print**
-3. Tap **Select Printer** — InkPrint appears automatically
-4. Tap **Print**
+3. Tap **Select Printer** — InkPrint and InkPrint EPUB appear automatically
+4. Tap **Print** — InkPrint saves a PDF on the BOOX, InkPrint EPUB an e-book
 
 > ⚠️ Personal Hotspot limitation: if your iPhone is sharing its hotspot, devices connected to it cannot discover the printer. Use a shared WiFi router.
 
@@ -237,12 +253,15 @@ Works on Ubuntu, Debian, Fedora, Arch, and any distro with CUPS.
 
 1. Settings → Connected devices → Connection preferences → Printing
 2. Default Print Service → Enable
-3. InkPrint appears automatically on the same WiFi
+3. InkPrint and InkPrint EPUB appear automatically on the same WiFi
 
 **Manual:**
 
 1. In Default Print Service, tap ⋮ → **Add printer** → **Add printer by IP address**
 2. Enter the address with the port: `<ANDROID_IP>:6310`
+
+Adding by IP only reaches the PDF printer (Android's dialog takes no printer
+path); use auto-discovery for InkPrint EPUB.
 
 ---
 
