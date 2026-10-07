@@ -61,10 +61,22 @@ fn in_margin(r: &Rect, page: &Rect) -> bool {
     r.y1 < page.y0 + page.h() * MARGIN_BAND || r.y0 > page.y1 - page.h() * MARGIN_BAND
 }
 
-/// Distributes `lines` into the model's `regions`. Lines no region claims
-/// become text regions of their own; text regions that end up empty are
-/// dropped; placed images the model missed become figures.
-pub fn assign(regions: Vec<(Rect, Kind)>, lines: Vec<Line>, images: &[Rect], page: &Rect) -> Vec<Region> {
+/// Distributes `lines` into the model's `regions`. Placed images the model
+/// missed become figures first; lines no region claims become text regions
+/// of their own; text regions that end up empty are dropped.
+pub fn assign(mut regions: Vec<(Rect, Kind)>, lines: Vec<Line>, images: &[Rect], page: &Rect) -> Vec<Region> {
+    // Placed images the model missed are figures too. Added before grouping
+    // so screenshots side by side end up as one picture.
+    let found: Vec<Rect> = regions.iter().filter(|(_, k)| k.is_picture()).map(|(r, _)| *r).collect();
+    for img in images {
+        let big_enough = img.area() > page.area() * 0.015;
+        let whole_page = img.area() > page.area() * 0.8;
+        let covered = found.iter().any(|r| img.covered_by(r) > 0.5);
+        if big_enough && !whole_page && !covered {
+            regions.push((*img, Kind::Figure));
+        }
+    }
+    let regions = group_side_by_side(regions, page);
     let mut regions: Vec<Region> = regions
         .into_iter()
         .map(|(rect, kind)| {
@@ -118,15 +130,6 @@ pub fn assign(regions: Vec<(Rect, Kind)>, lines: Vec<Line>, images: &[Rect], pag
     }
     regions.retain(|r| !r.kind.is_text() || !r.lines.is_empty());
     regions.extend(text_blocks(orphans, page));
-
-    for img in images {
-        let big_enough = img.area() > page.area() * 0.015;
-        let whole_page = img.area() > page.area() * 0.8;
-        let covered = regions.iter().any(|r| r.kind.is_picture() && img.covered_by(&r.rect) > 0.5);
-        if big_enough && !whole_page && !covered {
-            regions.push(Region { rect: *img, kind: Kind::Figure, lines: Vec::new(), in_margin: false });
-        }
-    }
     regions
 }
 
@@ -244,6 +247,63 @@ pub fn detect_tables(lines: &[Line], page: &Rect) -> Vec<Rect> {
     tables
 }
 
+/// Pictures placed side by side (screenshots in a comparison table, a row
+/// of figures) become one picture, so a reflowing reader shows them as laid
+/// out instead of one per screen. A short strip of text right above or
+/// below such a row — its column headings or captions, which the model may
+/// even call a page header — goes into the picture too. Section titles stay
+/// out.
+fn group_side_by_side(regions: Vec<(Rect, Kind)>, page: &Rect) -> Vec<(Rect, Kind)> {
+    let mut regions: Vec<(Rect, Kind, usize)> = regions.into_iter().map(|(r, k)| (r, k, 1)).collect();
+    loop {
+        let mut merged = false;
+        'search: for i in 0..regions.len() {
+            for j in i + 1..regions.len() {
+                let (a, b) = (&regions[i], &regions[j]);
+                if !a.1.is_picture() || !b.1.is_picture() {
+                    continue;
+                }
+                let v_overlap = a.0.y1.min(b.0.y1) - a.0.y0.max(b.0.y0);
+                let h_gap = (b.0.x0 - a.0.x1).max(a.0.x0 - b.0.x1);
+                if v_overlap > 0.5 * a.0.h().min(b.0.h()) && h_gap < 0.08 * page.w() {
+                    let kind = if a.1 == Kind::Table || b.1 == Kind::Table { Kind::Table } else { Kind::Figure };
+                    let joined = (a.0.union(&b.0), kind, a.2 + b.2);
+                    regions[i] = joined;
+                    regions.remove(j);
+                    merged = true;
+                    break 'search;
+                }
+            }
+        }
+        if !merged {
+            break;
+        }
+    }
+    // Pull in the headings/captions strip of each multi-picture row.
+    let rows: Vec<usize> = (0..regions.len()).filter(|&i| regions[i].2 >= 2).collect();
+    for i in rows {
+        let row = regions[i].0;
+        let mut absorbed = row;
+        regions.retain(|(r, k, n)| {
+            let strip = matches!(k, Kind::Text | Kind::Caption | Kind::Furniture)
+                && *n == 1
+                && r.h() < 0.06 * page.h()
+                && r.x0 >= row.x0 - 0.02 * page.w()
+                && r.x1 <= row.x1 + 0.02 * page.w()
+                && ((row.y0 - r.y1 >= -1.0 && row.y0 - r.y1 < 0.04 * page.h())
+                    || (r.y0 - row.y1 >= -1.0 && r.y0 - row.y1 < 0.04 * page.h()));
+            if strip {
+                absorbed = absorbed.union(r);
+            }
+            !strip
+        });
+        if let Some(g) = regions.iter_mut().find(|(r, _, n)| *n >= 2 && *r == row) {
+            g.0 = absorbed;
+        }
+    }
+    regions.into_iter().map(|(r, k, _)| (r, k)).collect()
+}
+
 /// Without a layout model: blocks of text from line geometry, plus placed
 /// images as figures.
 pub fn heuristic(lines: Vec<Line>, images: &[Rect], page: &Rect) -> Vec<Region> {
@@ -326,6 +386,29 @@ mod tests {
         assert_eq!(r[1].kind, Kind::Figure);
         assert_eq!(r[1].lines[0].text, "label in figure");
         assert_eq!(r[2].lines[0].text, "stray");
+    }
+
+    #[test]
+    fn side_by_side_pictures_and_their_headings_become_one() {
+        let regions = vec![
+            (Rect::new(150.0, 60.0, 500.0, 80.0), Kind::Furniture),   // left column heading
+            (Rect::new(650.0, 60.0, 900.0, 80.0), Kind::Furniture),   // right column heading
+            (Rect::new(100.0, 110.0, 600.0, 400.0), Kind::Figure),
+            (Rect::new(640.0, 105.0, 900.0, 410.0), Kind::Figure),
+            (Rect::new(100.0, 500.0, 900.0, 530.0), Kind::Title),     // next section
+        ];
+        let r = assign(regions, vec![], &[], &page());
+        let pictures: Vec<&Region> = r.iter().filter(|x| x.kind.is_picture()).collect();
+        assert_eq!(pictures.len(), 1, "{r:?}");
+        assert_eq!(pictures[0].rect, Rect::new(100.0, 60.0, 900.0, 410.0));
+        // The section title is not part of it (it has no lines, so it is gone,
+        // but it was not absorbed either: the picture ends at 410).
+
+        // Same when the screenshots are placed images the model didn't see.
+        let images = [Rect::new(100.0, 110.0, 600.0, 400.0), Rect::new(640.0, 105.0, 900.0, 410.0)];
+        let heads = vec![(Rect::new(150.0, 60.0, 500.0, 80.0), Kind::Furniture)];
+        let r = assign(heads, vec![], &images, &page());
+        assert_eq!(r.iter().filter(|x| x.kind.is_picture()).count(), 1, "{r:?}");
     }
 
     #[test]
