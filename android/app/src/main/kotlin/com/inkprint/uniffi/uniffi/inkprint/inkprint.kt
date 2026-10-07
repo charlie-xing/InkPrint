@@ -654,8 +654,27 @@ internal open class UniffiForeignFutureStructVoid(
 internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
     fun callback(`callbackData`: Long,`result`: UniffiForeignFutureStructVoid.UniffiByValue,)
 }
+internal interface UniffiCallbackInterfaceConversionProgressMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`done`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
 internal interface UniffiCallbackInterfacePrintJobListenerMethod0 : com.sun.jna.Callback {
-    fun callback(`uniffiHandle`: Long,`jobId`: Int,`filePath`: RustBuffer.ByValue,`fileName`: RustBuffer.ByValue,`sizeBytes`: Long,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+    fun callback(`uniffiHandle`: Long,`jobId`: Int,`filePath`: RustBuffer.ByValue,`fileName`: RustBuffer.ByValue,`sizeBytes`: Long,`output`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+@Structure.FieldOrder("onPage", "uniffiFree")
+internal open class UniffiVTableCallbackInterfaceConversionProgress(
+    @JvmField internal var `onPage`: UniffiCallbackInterfaceConversionProgressMethod0? = null,
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+) : Structure() {
+    class UniffiByValue(
+        `onPage`: UniffiCallbackInterfaceConversionProgressMethod0? = null,
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    ): UniffiVTableCallbackInterfaceConversionProgress(`onPage`,`uniffiFree`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceConversionProgress) {
+        `onPage` = other.`onPage`
+        `uniffiFree` = other.`uniffiFree`
+    }
+
 }
 @Structure.FieldOrder("onJobReceived", "uniffiFree")
 internal open class UniffiVTableCallbackInterfacePrintJobListener(
@@ -744,6 +763,19 @@ internal open class UniffiVTableCallbackInterfacePrintJobListener(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -754,6 +786,7 @@ internal interface UniffiLib : Library {
             .also { lib: UniffiLib ->
                 uniffiCheckContractApiVersion(lib)
                 uniffiCheckApiChecksums(lib)
+                uniffiCallbackInterfaceConversionProgress.register(lib)
                 uniffiCallbackInterfacePrintJobListener.register(lib)
                 }
         }
@@ -764,19 +797,35 @@ internal interface UniffiLib : Library {
         }
     }
 
+    fun uniffi_inkprint_core_fn_clone_conversionprogress(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_inkprint_core_fn_free_conversionprogress(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_inkprint_core_fn_init_callback_vtable_conversionprogress(`vtable`: UniffiVTableCallbackInterfaceConversionProgress,
+    ): Unit
+    fun uniffi_inkprint_core_fn_method_conversionprogress_on_page(`ptr`: Pointer,`done`: Int,`total`: Int,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     fun uniffi_inkprint_core_fn_clone_printjoblistener(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_inkprint_core_fn_free_printjoblistener(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_inkprint_core_fn_init_callback_vtable_printjoblistener(`vtable`: UniffiVTableCallbackInterfacePrintJobListener,
     ): Unit
-    fun uniffi_inkprint_core_fn_method_printjoblistener_on_job_received(`ptr`: Pointer,`jobId`: Int,`filePath`: RustBuffer.ByValue,`fileName`: RustBuffer.ByValue,`sizeBytes`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_inkprint_core_fn_method_printjoblistener_on_job_received(`ptr`: Pointer,`jobId`: Int,`filePath`: RustBuffer.ByValue,`fileName`: RustBuffer.ByValue,`sizeBytes`: Long,`output`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_inkprint_core_fn_func_cancel_conversion(uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_inkprint_core_fn_func_convert_pdf_to_epub(`pdfPath`: RustBuffer.ByValue,`epubPath`: RustBuffer.ByValue,`options`: RustBuffer.ByValue,`progress`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_inkprint_core_fn_func_epub_supported(uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
     fun uniffi_inkprint_core_fn_func_get_local_ip(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_inkprint_core_fn_func_get_version(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    fun uniffi_inkprint_core_fn_func_start_server(`port`: Short,`storagePath`: RustBuffer.ByValue,`printerName`: RustBuffer.ByValue,`listener`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_inkprint_core_fn_func_release_models(uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_inkprint_core_fn_func_start_server(`port`: Short,`storagePath`: RustBuffer.ByValue,`printerName`: RustBuffer.ByValue,`epubEnabled`: Byte,`listener`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     fun uniffi_inkprint_core_fn_func_stop_server(uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
@@ -892,13 +941,23 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_inkprint_core_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_inkprint_core_checksum_func_cancel_conversion(
+    ): Short
+    fun uniffi_inkprint_core_checksum_func_convert_pdf_to_epub(
+    ): Short
+    fun uniffi_inkprint_core_checksum_func_epub_supported(
+    ): Short
     fun uniffi_inkprint_core_checksum_func_get_local_ip(
     ): Short
     fun uniffi_inkprint_core_checksum_func_get_version(
     ): Short
+    fun uniffi_inkprint_core_checksum_func_release_models(
+    ): Short
     fun uniffi_inkprint_core_checksum_func_start_server(
     ): Short
     fun uniffi_inkprint_core_checksum_func_stop_server(
+    ): Short
+    fun uniffi_inkprint_core_checksum_method_conversionprogress_on_page(
     ): Short
     fun uniffi_inkprint_core_checksum_method_printjoblistener_on_job_received(
     ): Short
@@ -919,19 +978,34 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
+    if (lib.uniffi_inkprint_core_checksum_func_cancel_conversion() != 40764.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_inkprint_core_checksum_func_convert_pdf_to_epub() != 27614.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_inkprint_core_checksum_func_epub_supported() != 3800.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_inkprint_core_checksum_func_get_local_ip() != 64560.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_inkprint_core_checksum_func_get_version() != 21532.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_inkprint_core_checksum_func_start_server() != 49846.toShort()) {
+    if (lib.uniffi_inkprint_core_checksum_func_release_models() != 27576.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_inkprint_core_checksum_func_start_server() != 39951.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_inkprint_core_checksum_func_stop_server() != 9356.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_inkprint_core_checksum_method_printjoblistener_on_job_received() != 29160.toShort()) {
+    if (lib.uniffi_inkprint_core_checksum_method_conversionprogress_on_page() != 6230.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_inkprint_core_checksum_method_printjoblistener_on_job_received() != 21248.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1292,9 +1366,310 @@ private class JavaLangRefCleanable(
 ) : UniffiCleaner.Cleanable {
     override fun clean() = cleanable.clean()
 }
+public interface ConversionProgress {
+    
+    fun `onPage`(`done`: kotlin.UInt, `total`: kotlin.UInt)
+    
+    companion object
+}
+
+open class ConversionProgressImpl: Disposable, AutoCloseable, ConversionProgress {
+
+    constructor(pointer: Pointer) {
+        this.pointer = pointer
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    /**
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noPointer: NoPointer) {
+        this.pointer = null
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(pointer))
+    }
+
+    protected val pointer: Pointer?
+    protected val cleanable: UniffiCleaner.Cleanable
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the pointer being freed concurrently.
+        try {
+            return block(this.uniffiClonePointer())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val pointer: Pointer?) : Runnable {
+        override fun run() {
+            pointer?.let { ptr ->
+                uniffiRustCall { status ->
+                    UniffiLib.INSTANCE.uniffi_inkprint_core_fn_free_conversionprogress(ptr, status)
+                }
+            }
+        }
+    }
+
+    fun uniffiClonePointer(): Pointer {
+        return uniffiRustCall() { status ->
+            UniffiLib.INSTANCE.uniffi_inkprint_core_fn_clone_conversionprogress(pointer!!, status)
+        }
+    }
+
+    override fun `onPage`(`done`: kotlin.UInt, `total`: kotlin.UInt)
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_inkprint_core_fn_method_conversionprogress_on_page(
+        it, FfiConverterUInt.lower(`done`),FfiConverterUInt.lower(`total`),_status)
+}
+    }
+    
+    
+
+    
+
+    
+    
+    companion object
+    
+}
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+internal const val IDX_CALLBACK_FREE = 0
+// Callback return codes
+internal const val UNIFFI_CALLBACK_SUCCESS = 0
+internal const val UNIFFI_CALLBACK_ERROR = 1
+internal const val UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
+
+/**
+ * @suppress
+ */
+public abstract class FfiConverterCallbackInterface<CallbackInterface: Any>: FfiConverter<CallbackInterface, Long> {
+    internal val handleMap = UniffiHandleMap<CallbackInterface>()
+
+    internal fun drop(handle: Long) {
+        handleMap.remove(handle)
+    }
+
+    override fun lift(value: Long): CallbackInterface {
+        return handleMap.get(value)
+    }
+
+    override fun read(buf: ByteBuffer) = lift(buf.getLong())
+
+    override fun lower(value: CallbackInterface) = handleMap.insert(value)
+
+    override fun allocationSize(value: CallbackInterface) = 8UL
+
+    override fun write(value: CallbackInterface, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceConversionProgress {
+    internal object `onPage`: UniffiCallbackInterfaceConversionProgressMethod0 {
+        override fun callback(`uniffiHandle`: Long,`done`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeConversionProgress.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onPage`(
+                    FfiConverterUInt.lift(`done`),
+                    FfiConverterUInt.lift(`total`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeConversionProgress.handleMap.remove(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceConversionProgress.UniffiByValue(
+        `onPage`,
+        uniffiFree,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_inkprint_core_fn_init_callback_vtable_conversionprogress(vtable)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeConversionProgress: FfiConverter<ConversionProgress, Pointer> {
+    internal val handleMap = UniffiHandleMap<ConversionProgress>()
+
+    override fun lower(value: ConversionProgress): Pointer {
+        return Pointer(handleMap.insert(value))
+    }
+
+    override fun lift(value: Pointer): ConversionProgress {
+        return ConversionProgressImpl(value)
+    }
+
+    override fun read(buf: ByteBuffer): ConversionProgress {
+        // The Rust code always writes pointers as 8 bytes, and will
+        // fail to compile if they don't fit.
+        return lift(Pointer(buf.getLong()))
+    }
+
+    override fun allocationSize(value: ConversionProgress) = 8UL
+
+    override fun write(value: ConversionProgress, buf: ByteBuffer) {
+        // The Rust code always expects pointers written as 8 bytes,
+        // and will fail to compile if they don't fit.
+        buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a Pointer/Arc<T>
+// to the live Rust struct on the other side of the FFI.
+//
+// Each instance implements core operations for working with the Rust `Arc<T>` and the
+// Kotlin Pointer to work with the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque pointer to the underlying Rust struct.
+//     Method calls need to read this pointer from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its pointer should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
+//      before it can pass the pointer over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
 public interface PrintJobListener {
     
-    fun `onJobReceived`(`jobId`: kotlin.UInt, `filePath`: kotlin.String, `fileName`: kotlin.String, `sizeBytes`: kotlin.ULong)
+    fun `onJobReceived`(`jobId`: kotlin.UInt, `filePath`: kotlin.String, `fileName`: kotlin.String, `sizeBytes`: kotlin.ULong, `output`: OutputFormat)
     
     companion object
 }
@@ -1380,12 +1755,12 @@ open class PrintJobListenerImpl: Disposable, AutoCloseable, PrintJobListener {
         }
     }
 
-    override fun `onJobReceived`(`jobId`: kotlin.UInt, `filePath`: kotlin.String, `fileName`: kotlin.String, `sizeBytes`: kotlin.ULong)
+    override fun `onJobReceived`(`jobId`: kotlin.UInt, `filePath`: kotlin.String, `fileName`: kotlin.String, `sizeBytes`: kotlin.ULong, `output`: OutputFormat)
         = 
     callWithPointer {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_inkprint_core_fn_method_printjoblistener_on_job_received(
-        it, FfiConverterUInt.lower(`jobId`),FfiConverterString.lower(`filePath`),FfiConverterString.lower(`fileName`),FfiConverterULong.lower(`sizeBytes`),_status)
+        it, FfiConverterUInt.lower(`jobId`),FfiConverterString.lower(`filePath`),FfiConverterString.lower(`fileName`),FfiConverterULong.lower(`sizeBytes`),FfiConverterTypeOutputFormat.lower(`output`),_status)
 }
     }
     
@@ -1398,43 +1773,12 @@ open class PrintJobListenerImpl: Disposable, AutoCloseable, PrintJobListener {
     companion object
     
 }
-// Magic number for the Rust proxy to call using the same mechanism as every other method,
-// to free the callback once it's dropped by Rust.
-internal const val IDX_CALLBACK_FREE = 0
-// Callback return codes
-internal const val UNIFFI_CALLBACK_SUCCESS = 0
-internal const val UNIFFI_CALLBACK_ERROR = 1
-internal const val UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
 
-/**
- * @suppress
- */
-public abstract class FfiConverterCallbackInterface<CallbackInterface: Any>: FfiConverter<CallbackInterface, Long> {
-    internal val handleMap = UniffiHandleMap<CallbackInterface>()
-
-    internal fun drop(handle: Long) {
-        handleMap.remove(handle)
-    }
-
-    override fun lift(value: Long): CallbackInterface {
-        return handleMap.get(value)
-    }
-
-    override fun read(buf: ByteBuffer) = lift(buf.getLong())
-
-    override fun lower(value: CallbackInterface) = handleMap.insert(value)
-
-    override fun allocationSize(value: CallbackInterface) = 8UL
-
-    override fun write(value: CallbackInterface, buf: ByteBuffer) {
-        buf.putLong(lower(value))
-    }
-}
 
 // Put the implementation in an object so we don't pollute the top-level namespace
 internal object uniffiCallbackInterfacePrintJobListener {
     internal object `onJobReceived`: UniffiCallbackInterfacePrintJobListenerMethod0 {
-        override fun callback(`uniffiHandle`: Long,`jobId`: Int,`filePath`: RustBuffer.ByValue,`fileName`: RustBuffer.ByValue,`sizeBytes`: Long,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+        override fun callback(`uniffiHandle`: Long,`jobId`: Int,`filePath`: RustBuffer.ByValue,`fileName`: RustBuffer.ByValue,`sizeBytes`: Long,`output`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
             val uniffiObj = FfiConverterTypePrintJobListener.handleMap.get(uniffiHandle)
             val makeCall = { ->
                 uniffiObj.`onJobReceived`(
@@ -1442,6 +1786,7 @@ internal object uniffiCallbackInterfacePrintJobListener {
                     FfiConverterString.lift(`filePath`),
                     FfiConverterString.lift(`fileName`),
                     FfiConverterULong.lift(`sizeBytes`),
+                    FfiConverterTypeOutputFormat.lift(`output`),
                 )
             }
             val writeReturn = { _: Unit -> Unit }
@@ -1498,6 +1843,237 @@ public object FfiConverterTypePrintJobListener: FfiConverter<PrintJobListener, P
 
 
 
+data class ConversionOptions (
+    var `title`: kotlin.String, 
+    var `pdfiumLib`: kotlin.String, 
+    var `ortLib`: kotlin.String, 
+    var `modelsDir`: kotlin.String?, 
+    var `ocr`: kotlin.Boolean, 
+    var `threads`: kotlin.UInt
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeConversionOptions: FfiConverterRustBuffer<ConversionOptions> {
+    override fun read(buf: ByteBuffer): ConversionOptions {
+        return ConversionOptions(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ConversionOptions) = (
+            FfiConverterString.allocationSize(value.`title`) +
+            FfiConverterString.allocationSize(value.`pdfiumLib`) +
+            FfiConverterString.allocationSize(value.`ortLib`) +
+            FfiConverterOptionalString.allocationSize(value.`modelsDir`) +
+            FfiConverterBoolean.allocationSize(value.`ocr`) +
+            FfiConverterUInt.allocationSize(value.`threads`)
+    )
+
+    override fun write(value: ConversionOptions, buf: ByteBuffer) {
+            FfiConverterString.write(value.`title`, buf)
+            FfiConverterString.write(value.`pdfiumLib`, buf)
+            FfiConverterString.write(value.`ortLib`, buf)
+            FfiConverterOptionalString.write(value.`modelsDir`, buf)
+            FfiConverterBoolean.write(value.`ocr`, buf)
+            FfiConverterUInt.write(value.`threads`, buf)
+    }
+}
+
+
+
+data class ConversionStats (
+    var `pages`: kotlin.UInt, 
+    var `ocrPages`: kotlin.UInt, 
+    var `imagePages`: kotlin.UInt, 
+    var `layoutModel`: kotlin.Boolean
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeConversionStats: FfiConverterRustBuffer<ConversionStats> {
+    override fun read(buf: ByteBuffer): ConversionStats {
+        return ConversionStats(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ConversionStats) = (
+            FfiConverterUInt.allocationSize(value.`pages`) +
+            FfiConverterUInt.allocationSize(value.`ocrPages`) +
+            FfiConverterUInt.allocationSize(value.`imagePages`) +
+            FfiConverterBoolean.allocationSize(value.`layoutModel`)
+    )
+
+    override fun write(value: ConversionStats, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`pages`, buf)
+            FfiConverterUInt.write(value.`ocrPages`, buf)
+            FfiConverterUInt.write(value.`imagePages`, buf)
+            FfiConverterBoolean.write(value.`layoutModel`, buf)
+    }
+}
+
+
+
+
+
+sealed class ConvertException(message: String): kotlin.Exception(message) {
+        
+        class Cancelled(message: String) : ConvertException(message)
+        
+        class Failed(message: String) : ConvertException(message)
+        
+
+    companion object ErrorHandler : UniffiRustCallStatusErrorHandler<ConvertException> {
+        override fun lift(error_buf: RustBuffer.ByValue): ConvertException = FfiConverterTypeConvertError.lift(error_buf)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeConvertError : FfiConverterRustBuffer<ConvertException> {
+    override fun read(buf: ByteBuffer): ConvertException {
+        
+            return when(buf.getInt()) {
+            1 -> ConvertException.Cancelled(FfiConverterString.read(buf))
+            2 -> ConvertException.Failed(FfiConverterString.read(buf))
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+        
+    }
+
+    override fun allocationSize(value: ConvertException): ULong {
+        return 4UL
+    }
+
+    override fun write(value: ConvertException, buf: ByteBuffer) {
+        when(value) {
+            is ConvertException.Cancelled -> {
+                buf.putInt(1)
+                Unit
+            }
+            is ConvertException.Failed -> {
+                buf.putInt(2)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+
+}
+
+
+
+
+enum class OutputFormat {
+    
+    PDF,
+    EPUB;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeOutputFormat: FfiConverterRustBuffer<OutputFormat> {
+    override fun read(buf: ByteBuffer) = try {
+        OutputFormat.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: OutputFormat) = 4UL
+
+    override fun write(value: OutputFormat, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
+    override fun read(buf: ByteBuffer): kotlin.String? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterString.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.String?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.String?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterString.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeConversionProgress: FfiConverterRustBuffer<ConversionProgress?> {
+    override fun read(buf: ByteBuffer): ConversionProgress? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeConversionProgress.read(buf)
+    }
+
+    override fun allocationSize(value: ConversionProgress?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeConversionProgress.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ConversionProgress?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeConversionProgress.write(value, buf)
+        }
+    }
+}
+
+
+
 
 /**
  * @suppress
@@ -1526,7 +2102,34 @@ public object FfiConverterOptionalTypePrintJobListener: FfiConverterRustBuffer<P
             FfiConverterTypePrintJobListener.write(value, buf)
         }
     }
-} fun `getLocalIp`(): kotlin.String {
+} fun `cancelConversion`()
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_inkprint_core_fn_func_cancel_conversion(
+        _status)
+}
+    
+    
+
+    @Throws(ConvertException::class) fun `convertPdfToEpub`(`pdfPath`: kotlin.String, `epubPath`: kotlin.String, `options`: ConversionOptions, `progress`: ConversionProgress?): ConversionStats {
+            return FfiConverterTypeConversionStats.lift(
+    uniffiRustCallWithError(ConvertException) { _status ->
+    UniffiLib.INSTANCE.uniffi_inkprint_core_fn_func_convert_pdf_to_epub(
+        FfiConverterString.lower(`pdfPath`),FfiConverterString.lower(`epubPath`),FfiConverterTypeConversionOptions.lower(`options`),FfiConverterOptionalTypeConversionProgress.lower(`progress`),_status)
+}
+    )
+    }
+    
+ fun `epubSupported`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_inkprint_core_fn_func_epub_supported(
+        _status)
+}
+    )
+    }
+    
+ fun `getLocalIp`(): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_inkprint_core_fn_func_get_local_ip(
@@ -1544,11 +2147,19 @@ public object FfiConverterOptionalTypePrintJobListener: FfiConverterRustBuffer<P
     )
     }
     
- fun `startServer`(`port`: kotlin.UShort, `storagePath`: kotlin.String, `printerName`: kotlin.String, `listener`: PrintJobListener?): kotlin.Boolean {
+ fun `releaseModels`()
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_inkprint_core_fn_func_release_models(
+        _status)
+}
+    
+    
+ fun `startServer`(`port`: kotlin.UShort, `storagePath`: kotlin.String, `printerName`: kotlin.String, `epubEnabled`: kotlin.Boolean, `listener`: PrintJobListener?): kotlin.Boolean {
             return FfiConverterBoolean.lift(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_inkprint_core_fn_func_start_server(
-        FfiConverterUShort.lower(`port`),FfiConverterString.lower(`storagePath`),FfiConverterString.lower(`printerName`),FfiConverterOptionalTypePrintJobListener.lower(`listener`),_status)
+        FfiConverterUShort.lower(`port`),FfiConverterString.lower(`storagePath`),FfiConverterString.lower(`printerName`),FfiConverterBoolean.lower(`epubEnabled`),FfiConverterOptionalTypePrintJobListener.lower(`listener`),_status)
 }
     )
     }

@@ -137,6 +137,7 @@ object JobStorage {
 
     fun mimeTypeOf(file: File): String = when (file.extension.lowercase()) {
         "pdf" -> "application/pdf"
+        "epub" -> "application/epub+zip"
         "ps" -> "application/postscript"
         "jpg", "jpeg" -> "image/jpeg"
         "png" -> "image/png"

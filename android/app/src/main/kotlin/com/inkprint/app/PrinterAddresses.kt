@@ -6,6 +6,7 @@ import java.net.NetworkInterface
 /** One way to reach the printer: the network it's on and the IPv4 address there. */
 data class PrinterAddress(val label: String, val ip: String) {
     fun printerUrl(port: Int) = "ipp://$ip:$port/ipp/print"
+    fun epubPrinterUrl(port: Int) = "ipp://$ip:$port/ipp/epub"
 }
 
 /**

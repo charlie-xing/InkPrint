@@ -1,3 +1,8 @@
 [workspace]
 members = ["inkprint-core", "inkprint-epub", "uniffi-bindgen"]
 resolver = "2"
+
+[profile.release]
+# Drops the symbol table from libinkprint_core.so (~5 MB); the dynamic
+# symbols UniFFI/JNA look up are kept.
+strip = "symbols"

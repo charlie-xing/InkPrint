@@ -10,8 +10,11 @@ android/local.properties
 *.aab
 *.idsig
 
-# Android JNI libs (built by cargo-ndk, not checked in)
+# Android JNI libs (built by cargo-ndk / fetched by make, not checked in)
 android/app/src/main/jniLibs/
+android/app/src/full/jniLibs/
+# Native libraries for host-side EPUB tests (make fetch-native-deps)
+/native/
 android/android/
 
 # IDE

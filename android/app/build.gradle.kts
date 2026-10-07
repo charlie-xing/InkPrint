@@ -47,8 +47,8 @@ android {
         applicationId = "com.inkprint.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.3"
+        versionCode = 15
+        versionName = "0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -71,6 +71,22 @@ android {
         }
     }
 
+    // "full" carries the EPUB printer: prebuilt pdfium and ONNX Runtime plus
+    // the layout/OCR models. "fdroid" leaves all of that out, since F-Droid
+    // builds every native library from source; its Rust core is built with
+    // `--no-default-features` (make rust-build-android-fdroid).
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("full") {
+            dimension = "distribution"
+            buildConfigField("boolean", "EPUB", "true")
+        }
+        create("fdroid") {
+            dimension = "distribution"
+            buildConfigField("boolean", "EPUB", "false")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -90,11 +106,22 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        // The AAR's Java bindings are unused: the Rust core dlopens
+        // libonnxruntime.so itself.
+        jniLibs {
+            excludes += "**/libonnxruntime4j_jni.so"
+        }
+    }
+    // The models are already compressed; storing them avoids inflating 11 MB
+    // on every install-time copy.
+    androidResources {
+        noCompress += "onnx"
     }
 
     sourceSets {
@@ -118,6 +145,8 @@ dependencies {
     // (the version in the Compose BOM above isn't). Google Play requires 16 KB
     // page support for apps targeting Android 15+.
     implementation("androidx.graphics:graphics-path:1.1.0")
+    // libonnxruntime.so for the EPUB printer's layout analysis and OCR.
+    "fullImplementation"("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

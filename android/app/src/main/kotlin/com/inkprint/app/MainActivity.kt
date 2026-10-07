@@ -116,6 +116,10 @@ class MainActivity : ComponentActivity() {
     private fun stopPrinterService() =
         startService(Intent(this, PrinterService::class.java).apply { action = PrinterService.ACTION_STOP })
 
+    /** Picks up a changed EPUB printer setting by restarting the server. */
+    private fun restartPrinterService() =
+        startService(Intent(this, PrinterService::class.java).apply { action = PrinterService.ACTION_RESTART })
+
     private fun exitApp() {
         stopPrinterService()
         finishAndRemoveTask()
@@ -196,6 +200,7 @@ class MainActivity : ComponentActivity() {
         val onWifi        = addresses.any { it.label == "Wi-Fi" || it.label == "Ethernet" }
 
         val files = remember(jobTick) { getStoredFiles() }
+        var epubPrinter by remember { mutableStateOf(Settings.epubPrinter(this@MainActivity)) }
 
         Column(
             modifier = Modifier
@@ -262,6 +267,7 @@ class MainActivity : ComponentActivity() {
                             Spacer(Modifier.height(4.dp))
                             Text(addr.label, fontSize = 12.sp, color = Color.Gray)
                             CopyableText(addr.printerUrl(port))
+                            if (epubPrinter) CopyableText(addr.epubPrinterUrl(port))
                             if (addr.label == "VPN") {
                                 Text(
                                     "Works only if this VPN lets its devices connect to each other.",
@@ -271,6 +277,18 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+            }
+
+            if (BuildConfig.EPUB) {
+                Spacer(Modifier.height(12.dp))
+                EpubCard(
+                    epubPrinter = epubPrinter,
+                    onEpubPrinter = { on ->
+                        Settings.setEpubPrinter(this@MainActivity, on)
+                        epubPrinter = on
+                        if (isRunning) restartPrinterService()
+                    }
+                )
             }
 
             Spacer(Modifier.height(16.dp))
@@ -302,6 +320,7 @@ class MainActivity : ComponentActivity() {
 
             // Exit + Feedback
             var showFeedbackDialog by remember { mutableStateOf(false) }
+            var showLicenses by remember { mutableStateOf(false) }
 
             if (showFeedbackDialog) {
                 AlertDialog(
@@ -319,6 +338,35 @@ class MainActivity : ComponentActivity() {
                         TextButton(onClick = { showFeedbackDialog = false }) {
                             Text("OK")
                         }
+                    },
+                    dismissButton = {
+                        if (BuildConfig.EPUB) {
+                            TextButton(onClick = { showFeedbackDialog = false; showLicenses = true }) {
+                                Text("Open-source licenses")
+                            }
+                        }
+                    }
+                )
+            }
+
+            if (showLicenses) {
+                AlertDialog(
+                    onDismissRequest = { showLicenses = false },
+                    title = { Text("Open-source licenses") },
+                    text = {
+                        Text(
+                            "InkPrint is MIT-licensed. The EPUB printer uses:\n\n" +
+                            "• PP-OCRv6 tiny and PP-DocLayout-S models — PaddlePaddle (PaddleOCR / PaddleX), Apache-2.0\n" +
+                            "• oar-ocr — Apache-2.0\n" +
+                            "• ONNX Runtime — Microsoft, MIT\n" +
+                            "• PDFium — BSD-3-Clause / Apache-2.0 (pdfium-binaries build)\n" +
+                            "• pdfium-render — MIT / Apache-2.0\n\n" +
+                            "Details: THIRD_PARTY_NOTICES.md at github.com/charlie-xing/InkPrint",
+                            fontSize = 13.sp
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showLicenses = false }) { Text("OK") }
                     }
                 )
             }
@@ -351,6 +399,71 @@ data class FileEntry(val name: String, val path: String, val sizeBytes: Long, va
     /** "1790148775_4_Weekly_Notes.pdf" -> "Weekly Notes.pdf": drops the core's timestamp/job-id prefix. */
     val displayName: String
         get() = name.replace(Regex("^\\d+_\\d+_"), "").replace('_', ' ').ifBlank { name }
+}
+
+// ── EPUB printer card ────────────────────────────────────────────────────────
+
+@Composable
+fun EpubCard(epubPrinter: Boolean, onEpubPrinter: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    var keepPdf by remember { mutableStateOf(Settings.keepPdf(context)) }
+    var ocr by remember { mutableStateOf(Settings.ocr(context)) }
+    val status by ConversionQueue.status.collectAsState()
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("EPUB printer", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(
+                "Print to \"InkPrint EPUB\" to get a reflowable e-book instead of a PDF. " +
+                "Text, headings and pictures are rebuilt on this device; tables are kept as pictures.",
+                fontSize = 12.sp, color = Color.Gray
+            )
+            SettingSwitch("EPUB printer", "Offer \"InkPrint EPUB\" next to the PDF printer", epubPrinter, onEpubPrinter)
+            if (epubPrinter) {
+                SettingSwitch("Recognise scanned pages (OCR)", "Off: scanned pages stay pictures — faster", ocr) {
+                    Settings.setOcr(context, it); ocr = it
+                }
+                SettingSwitch("Also keep the PDF", "Save the original PDF next to the EPUB", keepPdf) {
+                    Settings.setKeepPdf(context, it); keepPdf = it
+                }
+            }
+            status?.let { s ->
+                HorizontalDivider()
+                Text("Converting “${s.name}”", fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (s.total > 0) {
+                    LinearProgressIndicator(
+                        progress = { s.done.toFloat() / s.total },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        (if (s.total > 0) "Page ${s.done} of ${s.total}" else "Preparing…") +
+                            (if (s.waiting > 0) " · ${s.waiting} more waiting" else ""),
+                        fontSize = 12.sp, color = Color.Gray, modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { ConversionQueue.cancelCurrent() }) { Text("Cancel") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingSwitch(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onChange(!checked) },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp)
+            Text(subtitle, fontSize = 11.sp, color = Color.Gray)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
 }
 
 // ── File browser card ────────────────────────────────────────────────────────
@@ -478,6 +591,7 @@ fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit, onChooseFo
 
 internal fun fileIcon(name: String) = when (name.substringAfterLast('.').lowercase()) {
     "pdf" -> "\uD83D\uDCC4"
+    "epub" -> "\uD83D\uDCD6"
     "ps"  -> "\uD83D\uDDA8"
     else  -> "\uD83D\uDCC1"
 }
@@ -526,6 +640,13 @@ fun AddPrinterInstructionsCard(addresses: List<PrinterAddress>, port: String) {
                         "Always choose the driverless option (AirPrint, IPP Everywhere, IPP Class Driver) — InkPrint only accepts PDF.",
                         fontSize = 12.sp, color = Color.Gray
                     )
+                    if (BuildConfig.EPUB) {
+                        Text(
+                            "With the EPUB printer on, a second printer \"InkPrint EPUB\" appears next to \"InkPrint\" — add it the same way. " +
+                            "When adding it by address, replace /ipp/print with /ipp/epub in the steps below.",
+                            fontSize = 12.sp, color = Color.Gray
+                        )
+                    }
                     if (addresses.size > 1) {
                         Text("Show the steps for:", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
