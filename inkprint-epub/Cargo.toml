@@ -1,0 +1,28 @@
+[package]
+name = "inkprint-epub"
+version = "0.1.0"
+edition = "2021"
+description = "On-device PDF to reflowable EPUB conversion for InkPrint"
+license = "MIT"
+publish = false
+
+[features]
+default = ["ocr"]
+# Layout analysis + OCR through oar-ocr / ONNX Runtime. Without it, pages are
+# rebuilt from the PDF text layer with heuristics and image-only pages are
+# kept as pictures.
+ocr = ["dep:oar-ocr", "dep:ort"]
+
+[dependencies]
+pdfium-render = { version = "0.9", default-features = false, features = ["pdfium_latest", "image_latest", "thread_safe"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
+thiserror = "2"
+tracing = "0.1"
+# oar-ocr pins ort exactly; `load-dynamic` makes ort dlopen libonnxruntime at
+# runtime (the AAR ships it on Android), so building needs no ORT library.
+oar-ocr = { version = "=0.10.0", default-features = false, optional = true }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "load-dynamic"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
