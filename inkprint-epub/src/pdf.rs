@@ -99,7 +99,7 @@ pub fn analyze(page: &PdfPage, scale: f32) -> PageInfo {
             };
             if new_line {
                 flush(&mut cur, &mut lines);
-                cur = Some((Line { rect: r, text: String::new(), size }, r));
+                cur = Some((Line { rect: r, text: String::new(), size, chars: Vec::new(), ocr: false }, r));
             }
             let (l, last) = cur.as_mut().unwrap();
             l.text.push(ch);

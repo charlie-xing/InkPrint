@@ -10,6 +10,10 @@ pub struct Line {
     pub text: String,
     /// Font size in points (estimated from the line height for OCR text).
     pub size: f32,
+    /// One box per character of `text`, when known (OCR); empty otherwise.
+    pub chars: Vec<Rect>,
+    /// Read by OCR: `size` is only an estimate from the line height.
+    pub ocr: bool,
 }
 
 /// Characters that are set without spaces between them: CJK ideographs,
@@ -80,8 +84,10 @@ pub fn tidy(s: &str) -> String {
 
 /// Whether text ends a sentence (and so may end a paragraph).
 pub fn ends_sentence(s: &str) -> bool {
+    // Emoji and symbols after the full stop ("谢谢你，Kiki。💚") don't count.
+    let s = s.trim_end_matches(|c: char| c.is_whitespace() || (c as u32) >= 0x2190 && !is_cjk(c) || c == '\u{FE0F}');
     matches!(
-        s.trim_end().chars().last(),
+        s.chars().last(),
         Some('。' | '！' | '？' | '.' | '!' | '?' | '：' | ':' | '；' | ';' | '"' | '”' | '’' | ')' | '）' | '」' | '』' | '…')
     )
 }
@@ -198,6 +204,7 @@ pub fn merge_rows_within(mut lines: Vec<Line>, max_gap: f32) -> Vec<Line> {
                     a.text = join_lines(&a.text, &l.text);
                     a.rect = a.rect.union(&l.rect);
                     a.size = a.size.max(l.size);
+                    a.chars.clear();
                 }
                 _ => {
                     out.extend(acc.take());
@@ -216,6 +223,8 @@ pub fn merge_rows_within(mut lines: Vec<Line>, max_gap: f32) -> Vec<Line> {
 pub struct Para {
     pub text: String,
     pub size: f32,
+    /// Built from OCR lines, so `size` is only an estimate.
+    pub ocr: bool,
 }
 
 /// Splits the lines of one text block into paragraphs. Breaks on: a gap
@@ -242,7 +251,10 @@ pub fn paragraphs(lines: Vec<Line>) -> Vec<Para> {
             (Some(_), i) => {
                 let prev = &rows[i - 1];
                 let gap = gaps[i - 1];
-                let size_change = (row.size - prev.size).abs() > 0.15 * prev.size.max(row.size);
+                // OCR sizes come from box heights and jitter too much to compare.
+                let size_change = !row.ocr
+                    && !prev.ocr
+                    && (row.size - prev.size).abs() > 0.15 * prev.size.max(row.size);
                 let indented = row.rect.x0 > left + 1.2 * em && prev.rect.x0 <= left + 0.5 * em;
                 let prev_short = prev.rect.x1 < right - 2.5 * em && ends_sentence(&prev.text);
                 gap > usual_gap * 1.6 + 0.25 * lh
@@ -256,7 +268,7 @@ pub fn paragraphs(lines: Vec<Line>) -> Vec<Para> {
             if let Some(p) = cur.take() {
                 out.push(p);
             }
-            cur = Some(Para { text: row.text.trim().to_string(), size: row.size });
+            cur = Some(Para { text: row.text.trim().to_string(), size: row.size, ocr: row.ocr });
         } else if let Some(p) = cur.as_mut() {
             p.text = join_lines(&p.text, &row.text);
         }
@@ -274,7 +286,7 @@ mod tests {
     use super::*;
 
     fn line(y: f32, x0: f32, x1: f32, text: &str) -> Line {
-        Line { rect: Rect::new(x0, y, x1, y + 20.0), text: text.into(), size: 10.0 }
+        Line { rect: Rect::new(x0, y, x1, y + 20.0), text: text.into(), size: 10.0, chars: Vec::new(), ocr: false }
     }
 
     #[test]
@@ -286,6 +298,13 @@ mod tests {
         assert_eq!(join_lines("hello", "world"), "hello world");
         assert_eq!(join_lines("使用 IPP", "protocol"), "使用 IPP protocol");
         assert_eq!(join_lines("InkPrint", "在局域网上"), "InkPrint在局域网上");
+    }
+
+    #[test]
+    fn sentence_end_before_emoji() {
+        assert!(ends_sentence("谢谢你，Kiki。💚"));
+        assert!(ends_sentence("Thank you, Kiki. ❤️"));
+        assert!(!ends_sentence("衝下巨浪"));
     }
 
     #[test]

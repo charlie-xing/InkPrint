@@ -1,6 +1,11 @@
 //! Prints one page's regions in reading order:
 //! `regions <pdfium> <file.pdf> <page> [<ort> <models>]`.
 fn main() {
+    // RUST_LOG=inkprint_epub=debug shows the model's raw regions too.
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .init();
     let a: Vec<String> = std::env::args().collect();
     let opts = inkprint_epub::Options {
         title: String::new(),

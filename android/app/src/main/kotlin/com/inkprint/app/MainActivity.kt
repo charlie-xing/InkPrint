@@ -356,7 +356,7 @@ class MainActivity : ComponentActivity() {
                     text = {
                         Text(
                             "InkPrint is MIT-licensed. The EPUB printer uses:\n\n" +
-                            "• PP-OCRv6 tiny and PP-DocLayout-S models — PaddlePaddle (PaddleOCR / PaddleX), Apache-2.0\n" +
+                            "• PP-OCRv6 and PP-DocLayout-S models — PaddlePaddle (PaddleOCR / PaddleX), Apache-2.0\n" +
                             "• oar-ocr — Apache-2.0\n" +
                             "• ONNX Runtime — Microsoft, MIT\n" +
                             "• PDFium — BSD-3-Clause / Apache-2.0 (pdfium-binaries build)\n" +

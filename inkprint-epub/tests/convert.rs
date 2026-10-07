@@ -75,8 +75,9 @@ fn scanned_page_is_ocred() {
     let out = dir.path().join("scan.epub");
     let stats = convert(&fixture("scan-zh.pdf"), &out, &opts, None).unwrap();
     assert_eq!(stats.ocr_pages, 1);
-    let text = chapters(&out);
-    assert!(text.contains("InkPrint 在局域网上监听打印任务"), "{text}");
+    // OCR may or may not keep the space between Latin and CJK text.
+    let text: String = chapters(&out).chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(text.contains("InkPrint在局域网上监听打印任务"), "{text}");
 }
 
 #[test]
@@ -102,4 +103,28 @@ fn outlined_text_is_recognised() {
     let text = chapters(&out);
     assert!(text.contains("The story behind InkPrint"), "{text}");
     assert!(text.contains("inspired by my daughter"), "{text}");
+}
+
+/// A scanned magazine page: a title over a picture, a caption, and two
+/// columns of traditional Chinese with a narrow gutter and a paragraph that
+/// runs on from one column into the next.
+#[test]
+fn scanned_magazine_page() {
+    let Some(opts) = options(true) else { return eprintln!("skipped: INKPRINT_ORT/INKPRINT_MODELS not set") };
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("mag.epub");
+    let stats = convert(&fixture("magazine-zh-hant.pdf"), &out, &opts, None).unwrap();
+    assert_eq!(stats.ocr_pages, 1);
+    let html = chapters(&out);
+    let text: String = html.chars().filter(|c| !c.is_whitespace()).collect();
+    // Traditional characters the tiny recognition model's dictionary lacks.
+    assert!(html.contains("<h1 id=\"h1\">衝浪者說了什麼嗎？</h1>"), "{html}");
+    // The two columns are read one after the other, and the paragraph
+    // broken by the column change is whole again.
+    assert!(text.contains("旅館一房難求，咖啡館裡整天談論著浪高與風速，連從不下水的老漁夫"), "{text}");
+    let left = text.find("他說：「我一走到燈塔前").unwrap();
+    let right = text.find("如今，經常聽到人們").unwrap();
+    assert!(left < right, "left column first");
+    // Body text, not a table cut out as a picture.
+    assert!(!html.contains("<img src=\"images/p1-"), "{html}");
 }

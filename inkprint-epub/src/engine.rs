@@ -1,4 +1,6 @@
-//! Layout analysis (PP-DocLayout-S) and OCR (PP-OCRv6 tiny) through oar-ocr
+//! Layout analysis (PP-DocLayout-S) and OCR (PP-OCRv6 tiny detection,
+//! small recognition — tiny's 6.9k-character dictionary lacks common
+//! traditional characters such as 衝 說 嗎) through oar-ocr
 //! on ONNX Runtime. Models load lazily and stay resident until released;
 //! the ORT environment itself is never torn down (its global destructors
 //! abort the process on Android).
@@ -19,8 +21,8 @@ use crate::Error;
 
 pub const LAYOUT_MODEL: &str = "pp-doclayout-s.onnx";
 pub const DET_MODEL: &str = "pp-ocrv6_tiny_det.onnx";
-pub const REC_MODEL: &str = "pp-ocrv6_tiny_rec.onnx";
-pub const REC_DICT: &str = "ppocrv6_tiny_dict.txt";
+pub const REC_MODEL: &str = "pp-ocrv6_small_rec.onnx";
+pub const REC_DICT: &str = "ppocrv6_dict.txt";
 
 pub struct Engine {
     layout: LayoutDetectionPredictor,
@@ -81,6 +83,9 @@ pub fn get(ort_lib: &str, models: &Path, threads: usize) -> Result<Arc<Engine>, 
         // line in the batch, and the recognizer then silently drops
         // characters. One line at a time avoids padding altogether.
         .region_batch_size(1)
+        // Character positions let a line OCR read across a narrow column
+        // gutter be split back into its two columns.
+        .return_word_box(true)
         .build()
         .map_err(|e| Error::Model(format!("OCR models: {e}")))?;
     let engine = Arc::new(Engine { layout, ocr });
@@ -136,7 +141,8 @@ impl Engine {
             .text_regions
             .iter()
             .filter_map(|r| {
-                let text = r.text.as_deref()?.trim();
+                let raw = r.text.as_deref()?;
+                let text = raw.trim();
                 if !worth_keeping(text, r.confidence.unwrap_or(1.0)) {
                     return None;
                 }
@@ -144,7 +150,20 @@ impl Engine {
                 let rect = Rect::new(b.x_min(), b.y_min(), b.x_max(), b.y_max());
                 // A text line box is roughly 1.3× the font size.
                 let size = rect.h() / scale / 1.3;
-                Some(Line { rect, text: text.to_string(), size })
+                tracing::trace!(
+                    "ocr line {:?} chars={} boxes={:?}",
+                    text,
+                    text.chars().count(),
+                    r.word_boxes.as_ref().map(|b| b.len())
+                );
+                let chars = match &r.word_boxes {
+                    Some(boxes) if raw == text && boxes.len() == text.chars().count() => boxes
+                        .iter()
+                        .map(|w| Rect::new(w.x_min(), w.y_min(), w.x_max(), w.y_max()))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                Some(Line { rect, text: text.to_string(), size, chars, ocr: true })
             })
             .collect())
     }

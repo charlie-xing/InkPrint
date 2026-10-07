@@ -22,6 +22,8 @@ pub enum Block {
     Para {
         text: String,
         size: f32,
+        /// From OCR: the size is an estimate, not evidence of a heading.
+        ocr: bool,
         class: ParaClass,
         /// Set for text in the top/bottom margin: a running header/footer
         /// candidate, identified by this key.
@@ -33,7 +35,7 @@ pub enum Block {
 
 impl Block {
     pub fn para(text: String, size: f32, class: ParaClass) -> Block {
-        Block::Para { text, size, class, margin_key: None }
+        Block::Para { text, size, ocr: false, class, margin_key: None }
     }
 }
 
@@ -65,9 +67,17 @@ pub fn assemble(mut pages: Vec<Vec<Block>>, promote_headings: bool, zh: bool) ->
     let body = body_size(&pages);
     if promote_headings {
         for b in pages.iter_mut().flatten() {
-            if let Block::Para { text, size, class: ParaClass::Body, .. } = b {
+            if let Block::Para { text, size, ocr, class: ParaClass::Body, .. } = b {
                 let short = text.chars().count() <= 60;
-                if *size >= body * 1.12 && short && (!ends_sentence(text) || text.ends_with('：') || text.ends_with(':')) {
+                // OCR sizes come from box heights and jitter; only a
+                // clearly bigger line is a title there.
+                let factor = if *ocr { 1.3 } else { 1.12 };
+                if short {
+                    tracing::trace!("heading? {:.2}× body, ocr={} {:?}", *size / body, ocr, text);
+                }
+                // Titles may end in a colon, question or exclamation mark.
+                let ending_ok = !ends_sentence(text) || text.ends_with(['：', ':', '？', '?', '！', '!']);
+                if *size >= body * factor && short && ending_ok {
                     *b = Block::Heading { text: std::mem::take(text), size: *size, doc_title: false };
                 }
             }
@@ -226,7 +236,7 @@ fn heading_levels(pages: &[Vec<Block>]) -> impl Fn(f32, bool) -> u8 {
 /// Margin key for a paragraph found in the top/bottom margin.
 pub fn margin_para(text: String, size: f32) -> Block {
     let key = furniture_key(&text);
-    Block::Para { text, size, class: ParaClass::Body, margin_key: Some(key) }
+    Block::Para { text, size, ocr: false, class: ParaClass::Body, margin_key: Some(key) }
 }
 
 #[cfg(test)]

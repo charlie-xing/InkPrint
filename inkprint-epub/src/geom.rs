@@ -94,6 +94,10 @@ fn cut(rects: &[Rect], idx: Vec<usize>, out: &mut Vec<usize>, depth: u32) {
     let rows = if idx.len() > 1 { split(rects, &idx, true) } else { None };
     let cols = if idx.len() > 1 { split(rects, &idx, false) } else { None };
     let best = match (rows, cols) {
+        // Real columns run most of the way down: cut them apart first, even
+        // when two paragraphs happen to end at the same height in both and
+        // leave a wider band across the page.
+        (Some(_), Some(c)) if is_columns(rects, &c.0) => Some(c),
         (Some(r), Some(c)) => Some(if c.1 > r.1 { c } else { r }),
         (r, c) => r.or(c),
     };
@@ -112,6 +116,21 @@ fn cut(rects: &[Rect], idx: Vec<usize>, out: &mut Vec<usize>, depth: u32) {
             out.extend(idx);
         }
     }
+}
+
+/// Side-by-side groups that each span at least 60% of their combined
+/// height: text columns rather than a row of things.
+fn is_columns(rects: &[Rect], groups: &[Vec<usize>]) -> bool {
+    let extent = |g: &Vec<usize>| {
+        let y0 = g.iter().map(|&i| rects[i].y0).fold(f32::MAX, f32::min);
+        let y1 = g.iter().map(|&i| rects[i].y1).fold(f32::MIN, f32::max);
+        (y0, y1)
+    };
+    let all: Vec<(f32, f32)> = groups.iter().map(extent).collect();
+    let y0 = all.iter().map(|e| e.0).fold(f32::MAX, f32::min);
+    let y1 = all.iter().map(|e| e.1).fold(f32::MIN, f32::max);
+    let h = (y1 - y0).max(1.0);
+    all.iter().all(|e| e.1 - e.0 >= 0.6 * h)
 }
 
 /// Cuts `idx` in two at the widest empty band along y (`horizontal`) or x.
@@ -156,6 +175,20 @@ mod tests {
             Rect::new(55.0, 45.0, 100.0, 60.0), // 4 right bottom
         ];
         assert_eq!(xy_cut_order(&rects), vec![0, 2, 3, 1, 4]);
+    }
+
+    #[test]
+    fn columns_win_over_a_coincidental_row_gap() {
+        // Left column: two paragraphs; right column: two paragraphs; the
+        // first paragraph of each ends at the same height, leaving a band
+        // across the page wider than the gutter.
+        let rects = [
+            Rect::new(0.0, 0.0, 45.0, 30.0),    // 0 left p1
+            Rect::new(0.0, 50.0, 45.0, 100.0),  // 1 left p2
+            Rect::new(48.0, 0.0, 100.0, 30.0),  // 2 right p1
+            Rect::new(48.0, 50.0, 100.0, 100.0), // 3 right p2
+        ];
+        assert_eq!(xy_cut_order(&rects), vec![0, 1, 2, 3]);
     }
 
     #[test]

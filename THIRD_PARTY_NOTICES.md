@@ -6,7 +6,7 @@ build contains none of them.
 
 | Component | Used for | License | Source |
 |---|---|---|---|
-| PP-OCRv6 tiny (detection, recognition, dictionary) | Text recognition on scanned pages | Apache-2.0 | PaddlePaddle / PaddleOCR — https://github.com/PaddlePaddle/PaddleOCR |
+| PP-OCRv6 (tiny detection, small recognition, dictionary) | Text recognition on scanned pages | Apache-2.0 | PaddlePaddle / PaddleOCR — https://github.com/PaddlePaddle/PaddleOCR |
 | PP-DocLayout-S | Page layout analysis | Apache-2.0 | PaddlePaddle / PaddleX — https://github.com/PaddlePaddle/PaddleX |
 | oar-ocr | Running the PaddleOCR models from Rust | Apache-2.0 | https://github.com/GreatV/oar-ocr |
 | ONNX Runtime | Model inference | MIT | https://github.com/microsoft/onnxruntime |

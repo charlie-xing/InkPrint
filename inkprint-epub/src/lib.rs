@@ -182,14 +182,9 @@ pub fn page_regions(pdf: &Path, index: u16, opts: &Options) -> Result<Vec<(Rect,
     let scale = (DPI / 72.0).min(MAX_RENDER_PX / page.width().value.max(1.0));
     let info = pdf::analyze(&page, scale);
     let bitmap = pdf::render(&page, scale)?;
-    let lines = info.lines;
-    let regions = match layout_regions(engine.as_ref(), &bitmap, index as usize) {
-        Some(r) => {
-            let r = layout::with_detected_tables(r, &lines, &info.bounds);
-            layout::assign(r, lines, &info.images, &info.bounds)
-        }
-        None => layout::heuristic(lines, &info.images, &info.bounds),
-    };
+    let regions = analyze_page(&info, &bitmap, scale, index as usize, engine.as_ref(), opts)
+        .map(|(r, _)| r)
+        .unwrap_or_default();
     let order = geom::xy_cut_order(&regions.iter().map(|r| r.rect).collect::<Vec<_>>());
     Ok(order
         .into_iter()
@@ -235,34 +230,7 @@ fn convert_page<W: std::io::Write + std::io::Seek>(
         writer.set_cover(&jpeg(&DynamicImage::ImageRgb8(thumb).to_luma8())?)?;
     }
 
-    // Scans carry their text only as pixels: a big picture and next to no
-    // text layer. Pages with no text layer at all may still show text drawn
-    // as outlines, so they are OCR candidates too.
-    let picture_area: f32 = info.images.iter().map(|r| r.area()).sum();
-    let picture_only = info.chars < MIN_TEXT_CHARS && (info.chars == 0 || picture_area > 0.5 * info.bounds.area());
-
-    let model = layout_regions(engine, &bitmap, index);
-    let mut used_ocr = false;
-    let lines = if !picture_only {
-        let mut lines = info.lines;
-        // Part of the page may be outlines or a picture the text layer
-        // doesn't cover: recognise the page and fill in what's missing.
-        let gaps = model.as_ref().is_some_and(|m| layout::text_layer_has_gaps(m, &lines, &info.bounds))
-            || unexplained_ink(&bitmap, &lines, &info.images) > UNEXPLAINED_INK;
-        if gaps {
-            if let Some(ocr) = ocr_lines(engine, opts, &bitmap, scale, index) {
-                used_ocr = !ocr.is_empty();
-                lines = layout::merge_ocr(lines, ocr);
-            }
-        }
-        Some(lines)
-    } else {
-        let ocr_lines = ocr_lines(engine, opts, &bitmap, scale, index);
-        used_ocr = ocr_lines.as_ref().is_some_and(|l| !l.is_empty());
-        ocr_lines.filter(|l| !l.is_empty())
-    };
-
-    let Some(lines) = lines else {
+    let Some((regions, used_ocr)) = analyze_page(&info, &bitmap, scale, index, engine, opts) else {
         // Nothing to read: keep the page as a picture, unless it is blank.
         if is_blank(&bitmap) {
             return Ok(Page { blocks: Vec::new(), ocr: false, full_image: false });
@@ -270,16 +238,59 @@ fn convert_page<W: std::io::Write + std::io::Seek>(
         let href = writer.add_image(&format!("p{}", index + 1), &jpeg(&fit(DynamicImage::ImageRgb8(bitmap).to_luma8()))?)?;
         return Ok(Page { blocks: vec![Block::Figure { href, alt: String::new() }], ocr: false, full_image: true });
     };
+    let blocks = regions_to_blocks(regions, &bitmap, index, writer)?;
+    Ok(Page { blocks, ocr: used_ocr, full_image: false })
+}
+
+/// The page's regions with their lines, and whether OCR supplied text.
+/// None when the page has nothing to read (a picture-only page without OCR,
+/// or OCR found no text).
+fn analyze_page(
+    info: &pdf::PageInfo,
+    bitmap: &RgbImage,
+    scale: f32,
+    index: usize,
+    engine: Option<&EngineRef>,
+    opts: &Options,
+) -> Option<(Vec<Region>, bool)> {
+    // Scans carry their text only as pixels: a big picture and next to no
+    // text layer. Pages with no text layer at all may still show text drawn
+    // as outlines, so they are OCR candidates too.
+    let picture_area: f32 = info.images.iter().map(|r| r.area()).sum();
+    let picture_only = info.chars < MIN_TEXT_CHARS && (info.chars == 0 || picture_area > 0.5 * info.bounds.area());
+
+    let model = layout_regions(engine, bitmap, index);
+    let mut used_ocr = false;
+    let lines = if !picture_only {
+        let mut lines = info.lines.clone();
+        // Part of the page may be outlines or a picture the text layer
+        // doesn't cover: recognise the page and fill in what's missing.
+        let gaps = model.as_ref().is_some_and(|m| layout::text_layer_has_gaps(m, &lines, &info.bounds))
+            || unexplained_ink(bitmap, &lines, &info.images) > UNEXPLAINED_INK;
+        if gaps {
+            if let Some(ocr) = ocr_lines(engine, opts, bitmap, scale, index) {
+                used_ocr = !ocr.is_empty();
+                lines = layout::merge_ocr(lines, ocr);
+            }
+        }
+        lines
+    } else {
+        let ocr = ocr_lines(engine, opts, bitmap, scale, index).filter(|l| !l.is_empty())?;
+        used_ocr = true;
+        ocr
+    };
 
     let regions = match model {
         Some(r) => {
+            tracing::debug!("page {}: model regions {:?}", index + 1, r);
             let r = layout::with_detected_tables(r, &lines, &info.bounds);
+            tracing::debug!("page {}: with text-aligned tables {:?}", index + 1, r);
             layout::assign(r, lines, &info.images, &info.bounds)
         }
         None => layout::heuristic(lines, &info.images, &info.bounds),
     };
-    let blocks = regions_to_blocks(regions, &bitmap, index, writer)?;
-    Ok(Page { blocks, ocr: used_ocr, full_image: false })
+    let regions = if picture_only { layout::text_out_of_figures(regions, &info.bounds) } else { regions };
+    Some((regions, used_ocr))
 }
 
 #[cfg(feature = "ocr")]
@@ -288,7 +299,7 @@ fn ocr_lines(engine: Option<&EngineRef>, opts: &Options, bitmap: &RgbImage, scal
         return None;
     }
     match engine?.ocr(bitmap, scale) {
-        Ok(l) => Some(l),
+        Ok(l) => Some(layout::split_at_gutters(l)),
         Err(e) => {
             tracing::warn!("page {}: OCR failed: {e}", index + 1);
             None
@@ -323,12 +334,24 @@ fn regions_to_blocks<W: std::io::Write + std::io::Seek>(
     index: usize,
     writer: &mut epub::EpubWriter<W>,
 ) -> Result<Vec<Block>, Error> {
-    let rects: Vec<Rect> = regions.iter().map(|r| r.rect).collect();
-    let order = geom::xy_cut_order(&rects);
+    // A picture covering half the page or more is the page's background:
+    // it overlaps everything and would defeat the XY-cut. It goes first and
+    // the rest is ordered without it.
+    let page_area = bitmap.width() as f32 * bitmap.height() as f32;
+    let (backgrounds, rest): (Vec<usize>, Vec<usize>) =
+        (0..regions.len()).partition(|&i| regions[i].kind.is_picture() && regions[i].rect.area() >= 0.5 * page_area);
+    let rects: Vec<Rect> = rest.iter().map(|&i| regions[i].rect).collect();
+    let order: Vec<usize> = backgrounds
+        .into_iter()
+        .chain(geom::xy_cut_order(&rects).into_iter().map(|k| rest[k]))
+        .collect();
     let mut regions: Vec<Option<Region>> = regions.into_iter().map(Some).collect();
     let page_rect = Rect::new(0.0, 0.0, bitmap.width() as f32, bitmap.height() as f32);
     let mut blocks = Vec::new();
     let mut figures = 0;
+    // Bottom edge of the last text region, to spot a paragraph that runs on
+    // into the next column.
+    let mut last_text_bottom: Option<f32> = None;
     for i in order {
         let r = regions[i].take().unwrap();
         match r.kind {
@@ -346,16 +369,41 @@ fn regions_to_blocks<W: std::io::Write + std::io::Seek>(
                 }
             }
             Kind::Text | Kind::Caption | Kind::DocTitle | Kind::Title => {
+                // This block starts higher up than the previous one ended:
+                // a new column. A long paragraph left unfinished there runs
+                // on into it. (A caption followed by text below it doesn't.)
+                let new_column = last_text_bottom.is_some_and(|b| r.rect.y0 < b - 0.5 * r.rect.h().min(50.0));
+                let bottom = r.rect.y1;
+                let mut first = true;
                 for p in text::paragraphs(r.lines) {
+                    let runs_on = std::mem::take(&mut first)
+                        && new_column
+                        && r.kind == Kind::Text
+                        && !r.in_margin
+                        && !text::is_list_item(&p.text)
+                        && matches!(blocks.last(), Some(Block::Para { text, class: ParaClass::Body, margin_key: None, .. })
+                            if text.chars().count() >= 20 && !text::ends_sentence(text));
+                    if runs_on {
+                        if let Some(Block::Para { text, .. }) = blocks.last_mut() {
+                            *text = text::join_lines(text, &p.text);
+                        }
+                        continue;
+                    }
+                    let class = if r.kind == Kind::Caption {
+                        ParaClass::Caption
+                    } else if text::is_list_item(&p.text) {
+                        ParaClass::ListItem
+                    } else {
+                        ParaClass::Body
+                    };
                     blocks.push(if r.in_margin {
                         book::margin_para(p.text, p.size)
-                    } else if r.kind == Kind::Caption {
-                        Block::para(p.text, p.size, ParaClass::Caption)
-                    } else if text::is_list_item(&p.text) {
-                        Block::para(p.text, p.size, ParaClass::ListItem)
                     } else {
-                        Block::para(p.text, p.size, ParaClass::Body)
+                        Block::Para { text: p.text, size: p.size, ocr: p.ocr, class, margin_key: None }
                     });
+                }
+                if !r.in_margin {
+                    last_text_bottom = Some(bottom);
                 }
             }
             Kind::Figure | Kind::Table | Kind::Formula => {

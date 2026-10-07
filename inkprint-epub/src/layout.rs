@@ -2,7 +2,7 @@
 //! one, from text-line geometry. Text lines are then distributed into them.
 
 use crate::geom::Rect;
-use crate::text::{merge_rows, merge_rows_within, Line};
+use crate::text::{merge_rows_within, Line};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -155,6 +155,92 @@ pub fn text_layer_has_gaps(regions: &[(Rect, Kind)], lines: &[Line], page: &Rect
     empty > 0.25 * total && empty > 0.01 * page.area()
 }
 
+/// Splits OCR lines read straight across a column gutter. A line is cut
+/// where the step between two of its characters is far wider than usual
+/// and other lines confirm a gutter there: at least three end where the gap
+/// starts and three begin where it ends. Lines without character boxes are
+/// left alone.
+pub fn split_at_gutters(lines: Vec<Line>) -> Vec<Line> {
+    let mut hs: Vec<f32> = lines.iter().map(|l| l.rect.h()).collect();
+    hs.sort_by(f32::total_cmp);
+    let em = hs.get(hs.len() / 2).copied().unwrap_or(1.0).max(1.0);
+    let ends: Vec<f32> = lines.iter().map(|l| l.rect.x1).collect();
+    let starts: Vec<f32> = lines.iter().map(|l| l.rect.x0).collect();
+    let confirmed = |gx0: f32, gx1: f32| {
+        ends.iter().filter(|&&e| (e - gx0).abs() < 2.0 * em).count() >= 3
+            && starts.iter().filter(|&&s| (s - gx1).abs() < 2.0 * em).count() >= 3
+    };
+    let mut out = Vec::with_capacity(lines.len());
+    let mut queue: Vec<Line> = lines;
+    while let Some(l) = queue.pop() {
+        let n = l.chars.len();
+        if n < 4 || n != l.text.chars().count() {
+            out.push(l);
+            continue;
+        }
+        let centers: Vec<f32> = l.chars.iter().map(|c| c.cx()).collect();
+        let mut steps: Vec<f32> = centers.windows(2).map(|w| w[1] - w[0]).collect();
+        let cut = {
+            let mut sorted = steps.clone();
+            sorted.sort_by(f32::total_cmp);
+            let usual = sorted[sorted.len() / 2].max(1.0);
+            steps
+                .iter_mut()
+                .enumerate()
+                .filter(|(_, s)| **s > 1.5 * usual)
+                .map(|(k, _)| k)
+                .find(|&k| confirmed(l.chars[k].x1, l.chars[k + 1].x0))
+        };
+        match cut {
+            Some(k) => {
+                let text: Vec<char> = l.text.chars().collect();
+                let part = |range: std::ops::Range<usize>| {
+                    let boxes: Vec<Rect> = l.chars[range.clone()].to_vec();
+                    let rect = boxes.iter().skip(1).fold(boxes[0], |a, b| a.union(b));
+                    let rect = Rect::new(rect.x0, l.rect.y0, rect.x1, l.rect.y1);
+                    Line {
+                        rect,
+                        text: text[range].iter().collect::<String>().trim().to_string(),
+                        size: l.size,
+                        chars: boxes,
+                        ocr: l.ocr,
+                    }
+                };
+                // Either half may hold another gutter (three columns).
+                queue.push(part(0..k + 1));
+                queue.push(part(k + 1..n));
+            }
+            None => out.push(l),
+        }
+    }
+    out
+}
+
+/// On scanned pages the model often takes a photo with text set over it —
+/// a title, a caption, even a whole column — for one picture. Lines of real
+/// text inside a figure are taken out and rebuilt as text blocks; the
+/// picture stays. In a figure covering half the page or more (the page's
+/// background, in effect) that is every line; in a smaller one, lines of at
+/// least 12 letters, digits or CJK characters (labels in a diagram are
+/// shorter).
+pub fn text_out_of_figures(mut regions: Vec<Region>, page: &Rect) -> Vec<Region> {
+    let (mut body, mut captions) = (Vec::new(), Vec::new());
+    for r in regions.iter_mut().filter(|r| r.kind == Kind::Figure) {
+        let background = r.rect.area() >= 0.5 * page.area();
+        let min_chars = if background { 2 } else { 12 };
+        let (text, keep): (Vec<Line>, Vec<Line>) = std::mem::take(&mut r.lines)
+            .into_iter()
+            .partition(|l| l.text.chars().filter(|c| c.is_alphanumeric()).count() >= min_chars);
+        r.lines = keep;
+        // Text over a page-sized picture is the page's own text; over a
+        // smaller picture it is that picture's caption.
+        if background { body.extend(text) } else { captions.extend(text) }
+    }
+    regions.extend(text_blocks(body, page));
+    regions.extend(text_blocks(captions, page).into_iter().map(|b| Region { kind: Kind::Caption, ..b }));
+    regions
+}
+
 /// Text-layer lines plus the OCR lines that don't repeat one of them.
 pub fn merge_ocr(mut text: Vec<Line>, ocr: Vec<Line>) -> Vec<Line> {
     let extra: Vec<Line> = ocr
@@ -200,20 +286,49 @@ pub fn detect_tables(lines: &[Line], page: &Rect) -> Vec<Rect> {
     let mut cols: Vec<f32> = Vec::new();
     let aligned = |x: f32, cols: &[f32]| cols.iter().any(|c| (c - x).abs() < 1.5 * em);
     let finish = |run: &mut Vec<usize>, cols: &mut Vec<f32>, tables: &mut Vec<Rect>| {
-        let multi = run.iter().filter(|&&i| bands[i].1.len() >= 2).count();
-        if multi >= 3 && cols.len() >= 2 {
-            // Median width of the segments starting in each column.
-            let wide_text = cols.iter().all(|c| {
-                let mut w: Vec<f32> = run
+        let multi: Vec<usize> = run.iter().copied().filter(|&i| bands[i].1.len() >= 2).collect();
+        // Real columns start a segment in most rows; other starts are line
+        // pieces (OCR splits at punctuation) inside a column.
+        let mut real: Vec<f32> = cols
+            .iter()
+            .copied()
+            .filter(|&c| {
+                let rows = multi.iter().filter(|&&i| bands[i].1.iter().any(|r| (r.x0 - c).abs() < 1.5 * em)).count();
+                rows >= 2 && rows * 2 >= multi.len()
+            })
+            .collect();
+        real.sort_by(f32::total_cmp);
+        if multi.len() >= 3 && real.len() >= 2 {
+            // Text set in columns fills each column line after line (it is
+            // justified); table cells come in all widths. So: every column
+            // wide, and most rows spanning nearly all of it, is text.
+            let wide_text = (0..real.len()).all(|k| {
+                let lo = real[k] - 1.5 * em;
+                let hi = real.get(k + 1).map(|n| n - 1.5 * em).unwrap_or(f32::MAX);
+                let extents: Vec<(f32, f32)> = run
                     .iter()
-                    .flat_map(|&i| bands[i].1.iter())
-                    .filter(|r| (r.x0 - c).abs() < 1.5 * em)
-                    .map(|r| r.w())
+                    .filter_map(|&i| {
+                        let pieces = bands[i].1.iter().filter(|r| r.x0 >= lo && r.x0 < hi);
+                        // A piece running on past the column (OCR read across
+                        // the gutter) only counts up to it.
+                        pieces.fold(None, |acc: Option<(f32, f32)>, r| {
+                            let x1 = r.x1.min(hi);
+                            Some(acc.map_or((r.x0, x1), |(a, b)| (a.min(r.x0), b.max(x1))))
+                        })
+                    })
                     .collect();
-                w.sort_by(f32::total_cmp);
-                !w.is_empty() && w[w.len() / 2] > 0.3 * page.w()
+                let x0 = extents.iter().map(|e| e.0).fold(f32::MAX, f32::min);
+                let x1 = extents.iter().map(|e| e.1).fold(f32::MIN, f32::max);
+                let span = x1 - x0;
+                let full = extents.iter().filter(|e| e.1 - e.0 >= 0.8 * span).count();
+                !extents.is_empty() && span > 0.25 * page.w() && full * 10 >= extents.len() * 6
             });
             if !wide_text {
+                tracing::debug!(
+                    "table: columns {:?}, rows {:?}",
+                    real,
+                    run.iter().map(|&i| bands[i].1.iter().map(|r| (r.x0 as i32, r.x1 as i32)).collect::<Vec<_>>()).collect::<Vec<_>>()
+                );
                 let rect = run.iter().skip(1).fold(bands[run[0]].0, |acc, &i| acc.union(&bands[i].0));
                 tables.push(rect);
             }
@@ -325,7 +440,9 @@ pub fn with_detected_tables(mut regions: Vec<(Rect, Kind)>, lines: &[Line], page
 /// Groups loose lines into text blocks: consecutive rows that overlap
 /// horizontally and are no further apart than about a line height.
 fn text_blocks(lines: Vec<Line>, page: &Rect) -> Vec<Region> {
-    let rows = merge_rows(lines);
+    // Magazine gutters can be under a line height wide: only bridge small
+    // gaps here (pieces of one column's line), never a gutter.
+    let rows = merge_rows_within(lines, 0.3);
     let mut blocks: Vec<Region> = Vec::new();
     for row in rows {
         let joins = blocks.iter().rposition(|b| {
@@ -335,7 +452,7 @@ fn text_blocks(lines: Vec<Line>, page: &Rect) -> Vec<Region> {
             gap > -0.5 * row.rect.h()
                 && gap < 1.2 * last.rect.h().max(row.rect.h())
                 && x_overlap > 0.0
-                && (row.size - last.size).abs() <= 0.15 * row.size.max(last.size)
+                && (row.ocr || last.ocr || (row.size - last.size).abs() <= 0.15 * row.size.max(last.size))
                 && in_margin(&b.rect, page) == in_margin(&row.rect, page)
         });
         match joins {
@@ -364,7 +481,7 @@ mod tests {
     }
 
     fn line(x0: f32, y: f32, x1: f32, text: &str) -> Line {
-        Line { rect: Rect::new(x0, y, x1, y + 20.0), text: text.into(), size: 10.0 }
+        Line { rect: Rect::new(x0, y, x1, y + 20.0), text: text.into(), size: 10.0, chars: Vec::new(), ocr: false }
     }
 
     #[test]
@@ -432,6 +549,28 @@ mod tests {
     }
 
     #[test]
+    fn line_read_across_a_gutter_is_split() {
+        // Two columns, 100..460 and 540..900; one OCR line runs across both.
+        let mut lines: Vec<Line> = (0..4)
+            .flat_map(|i| {
+                let y = 100.0 + 30.0 * i as f32;
+                [line(100.0, y, 460.0, "左欄"), line(540.0, y, 900.0, "右欄")]
+            })
+            .collect();
+        let text = "左欄左欄右欄右欄";
+        let chars: Vec<Rect> = [(100.0, 190.0), (190.0, 280.0), (280.0, 370.0), (370.0, 460.0),
+                                (540.0, 630.0), (630.0, 720.0), (720.0, 810.0), (810.0, 900.0)]
+            .iter()
+            .map(|&(a, b)| Rect::new(a, 250.0, b, 270.0))
+            .collect();
+        lines.push(Line { rect: Rect::new(100.0, 250.0, 900.0, 270.0), text: text.into(), size: 10.0, chars, ocr: true });
+        let out = split_at_gutters(lines);
+        assert_eq!(out.len(), 10);
+        assert!(out.iter().any(|l| l.text == "左欄左欄" && l.rect.x1 == 460.0));
+        assert!(out.iter().any(|l| l.text == "右欄右欄" && l.rect.x0 == 540.0));
+    }
+
+    #[test]
     fn ocr_fills_in_without_duplicating() {
         let text = vec![line(100.0, 100.0, 800.0, "from text layer")];
         let ocr = vec![line(102.0, 101.0, 798.0, "from text 1ayer"), line(100.0, 300.0, 800.0, "only in pixels")];
@@ -489,6 +628,21 @@ mod tests {
             })
             .collect();
         assert!(detect_tables(&cols, &page()).is_empty());
+
+        // OCR splits column lines at punctuation: pieces, but the column is
+        // still filled line after line.
+        let mut split: Vec<Line> = Vec::new();
+        for i in 0..8 {
+            let y = 100.0 + i as f32 * 26.0;
+            split.push(line(100.0, y, 470.0, "左欄正文"));
+            if i % 3 == 0 {
+                split.push(line(520.0, y, 640.0, "「右欄"));
+                split.push(line(660.0, y, 900.0, "正文」"));
+            } else {
+                split.push(line(520.0, y, 900.0, "右欄正文"));
+            }
+        }
+        assert!(detect_tables(&split, &page()).is_empty());
     }
 
     #[test]

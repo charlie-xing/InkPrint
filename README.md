@@ -142,8 +142,10 @@ being converted and has a Cancel button.
 - **Text-layer PDFs** (almost anything printed from a computer) are rebuilt from
   their text: headings, paragraphs, lists, and pictures in reading order.
   About 0.6 s per page on a BOOX Note Air (Snapdragon 636).
-- **Scanned pages** go through on-device OCR (PaddleOCR PP-OCRv6 tiny), about
-  3 s per page. Switch *Recognise scanned pages* off to keep them as pictures.
+- **Scanned pages** go through on-device OCR (PaddleOCR PP-OCRv6, simplified and
+  traditional Chinese, English), about 10 s for a dense magazine page. Text set
+  over photos, captions and two-column layouts are rebuilt as text; the photos
+  are kept. Switch *Recognise scanned pages* off to keep them as pictures.
 - **Tables, charts and formulas** are kept as pictures (grayscale, cut from the page).
 - Running headers, footers and page numbers are dropped; paragraphs split by a
   page break are joined; long documents are split into chapters.
