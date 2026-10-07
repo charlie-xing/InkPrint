@@ -776,6 +776,8 @@ internal open class UniffiVTableCallbackInterfacePrintJobListener(
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -822,6 +824,8 @@ internal interface UniffiLib : Library {
     fun uniffi_inkprint_core_fn_func_get_local_ip(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_inkprint_core_fn_func_get_version(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_inkprint_core_fn_func_make_pdf_searchable(`pdfPath`: RustBuffer.ByValue,`outPath`: RustBuffer.ByValue,`options`: RustBuffer.ByValue,`progress`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_inkprint_core_fn_func_release_models(uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -951,6 +955,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_inkprint_core_checksum_func_get_version(
     ): Short
+    fun uniffi_inkprint_core_checksum_func_make_pdf_searchable(
+    ): Short
     fun uniffi_inkprint_core_checksum_func_release_models(
     ): Short
     fun uniffi_inkprint_core_checksum_func_start_server(
@@ -991,6 +997,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_inkprint_core_checksum_func_get_version() != 21532.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_inkprint_core_checksum_func_make_pdf_searchable() != 25997.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_inkprint_core_checksum_func_release_models() != 27576.toShort()) {
@@ -1931,6 +1940,38 @@ public object FfiConverterTypeConversionStats: FfiConverterRustBuffer<Conversion
 
 
 
+data class SearchableStats (
+    var `pages`: kotlin.UInt, 
+    var `ocrPages`: kotlin.UInt
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSearchableStats: FfiConverterRustBuffer<SearchableStats> {
+    override fun read(buf: ByteBuffer): SearchableStats {
+        return SearchableStats(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SearchableStats) = (
+            FfiConverterUInt.allocationSize(value.`pages`) +
+            FfiConverterUInt.allocationSize(value.`ocrPages`)
+    )
+
+    override fun write(value: SearchableStats, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`pages`, buf)
+            FfiConverterUInt.write(value.`ocrPages`, buf)
+    }
+}
+
+
+
 
 
 sealed class ConvertException(message: String): kotlin.Exception(message) {
@@ -2143,6 +2184,16 @@ public object FfiConverterOptionalTypePrintJobListener: FfiConverterRustBuffer<P
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_inkprint_core_fn_func_get_version(
         _status)
+}
+    )
+    }
+    
+
+    @Throws(ConvertException::class) fun `makePdfSearchable`(`pdfPath`: kotlin.String, `outPath`: kotlin.String, `options`: ConversionOptions, `progress`: ConversionProgress?): SearchableStats {
+            return FfiConverterTypeSearchableStats.lift(
+    uniffiRustCallWithError(ConvertException) { _status ->
+    UniffiLib.INSTANCE.uniffi_inkprint_core_fn_func_make_pdf_searchable(
+        FfiConverterString.lower(`pdfPath`),FfiConverterString.lower(`outPath`),FfiConverterTypeConversionOptions.lower(`options`),FfiConverterOptionalTypeConversionProgress.lower(`progress`),_status)
 }
     )
     }

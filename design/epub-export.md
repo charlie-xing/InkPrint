@@ -433,11 +433,18 @@ M0–M4 一次完成。提交顺序：`inkprint-epub`（独立库）→ core（�
 full 变体 release APK 64.7 MB（`.so` 不压缩存放），其中 ONNX Runtime 31.5 MB、核心库 6.5 MB（release 配置 `strip = "symbols"`，原来 11.7 MB）、
 pdfium 6.3 MB、模型 11 MB。fdroid 变体 9.1 MB。
 
-### 下一步：方案 A「可搜索 PDF」（待验证）
+### 方案 A「可搜索 PDF」（已实现，2026-10-08）
 
 NeoReader 实测不支持固定版式 EPUB 上的文字（HTML 叠加层不随页面缩放；SVG 文字不显示、不能选中），
-所以「保持原版式 + 文字可选可搜索」改走 PDF：在扫描页上叠加不可见的 OCR 文字层（类似 ocrmypdf，
-用 Tesseract 的 GlyphLessFont 思路，无需嵌入中文字体），作为 PDF 打印机的可选项。先做样例在 BOOX 上验证 NeoReader 能否选中。
+所以「保持原版式 + 文字可选可搜索」改走 PDF：PDF 打印机的「Searchable scans」开关（默认关）。
+
+- `inkprint_epub::make_searchable`：判断哪些页需要 OCR 的规则与 EPUB 转换相同（扫描页；文字层有缺口的页只补缺失的行），
+  `searchable.rs` 用 lopdf 给这些页追加内容流：原内容包在 `q … Q` 里，文字用渲染模式 3（不可见）、Tesseract 式
+  「无字形字体」（Type0 + Identity-H + 恒等 ToUnicode，编码即 UTF-16，不嵌入字形），每行用 Tz 拉伸到 OCR 框的宽度。
+- 不需要 OCR 的 PDF 原样交付（逐字节不变）；处理失败或取消时交付原件。
+- 验证：poppler、pdfium 都能抽出文字；渲染与原件逐像素一致；NeoReader 中可选中、复制、搜索（用户在 BOOX 上确认）。
+  BOOX Note Air：扫描杂志 2 页 18.6 秒；4 页文字型 PDF 检查 2.6 秒、0 页 OCR。
+- Android：`ConversionQueue` 分两种任务（`convert/` 转 EPUB、`ocr/` 加文字层），各自断点恢复。
 
 ### 仍待验证
 

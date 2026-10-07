@@ -19,21 +19,23 @@ import uniffi.inkprint.ConversionStats
 import uniffi.inkprint.ConvertException
 import uniffi.inkprint.cancelConversion
 import uniffi.inkprint.convertPdfToEpub
+import uniffi.inkprint.makePdfSearchable
 import uniffi.inkprint.releaseModels
 import java.io.File
 import java.util.Collections
 import java.util.concurrent.Executors
 
 /**
- * Turns PDFs received by the EPUB printer into EPUBs, one at a time, in the
- * background.
+ * Background work on received PDFs, one job at a time: turning them into
+ * EPUBs (the EPUB printer) or adding an OCR text layer to their scanned
+ * pages (the PDF printer with searchable scans on).
  *
- * A job's PDF is moved into [convertDir] when it is queued and stays there
- * until it is done, so a PDF found in that directory is a job still to do:
- * [resume] picks those up after the process was killed. The finished EPUB
- * (and, if wanted, the PDF) is then handed to [JobStorage.deliver] like any
- * other job. When conversion fails or is cancelled, the PDF is delivered
- * instead so nothing is lost.
+ * A job's PDF is moved into its kind's directory ([Kind.dir]) when it is
+ * queued and stays there until it is done, so a PDF found there is a job
+ * still to do: [resume] picks those up after the process was killed. The
+ * result (and, for EPUBs, the PDF if wanted) is then handed to
+ * [JobStorage.deliver] like any other job. When the work fails or is
+ * cancelled, the PDF as received is delivered instead so nothing is lost.
  */
 object ConversionQueue {
 
@@ -45,7 +47,9 @@ object ConversionQueue {
     /** ONNX Runtime threads: leaves cores for the reader and the system. */
     private const val THREADS = 4u
 
-    data class Status(val name: String, val done: Int, val total: Int, val waiting: Int)
+    enum class Kind(val dir: String) { EPUB("convert"), SEARCHABLE("ocr") }
+
+    data class Status(val kind: Kind, val name: String, val done: Int, val total: Int, val waiting: Int)
 
     private val _status = MutableStateFlow<Status?>(null)
     /** The conversion in progress, for the UI; null when idle. */
@@ -58,34 +62,39 @@ object ConversionQueue {
     private val main = Handler(Looper.getMainLooper())
     private val releaseIdleModels = Runnable { executor.execute { releaseModels() } }
 
-    fun convertDir(context: Context): File {
+    fun dir(context: Context, kind: Kind): File {
         val base = context.getExternalFilesDir(null) ?: context.filesDir
-        return File(base, "convert").also { it.mkdirs() }
+        return File(base, kind.dir).also { it.mkdirs() }
     }
 
-    /** Takes over a PDF the EPUB printer just received. */
-    fun enqueue(context: Context, pdf: File) {
-        val staged = moveTo(pdf, convertDir(context))
-        submit(context.applicationContext, staged)
+    /** Takes over a received PDF: [Kind.EPUB] converts it, [Kind.SEARCHABLE] adds a text layer. */
+    fun enqueue(context: Context, pdf: File, kind: Kind) {
+        val staged = moveTo(pdf, dir(context, kind))
+        submit(context.applicationContext, staged, kind)
     }
 
     /** Re-queues jobs left unfinished when the process last died. */
     fun resume(context: Context) {
-        convertDir(context).listFiles { f -> f.isFile && f.extension.equals("pdf", true) }
-            ?.sortedBy { it.lastModified() }
-            ?.forEach { submit(context.applicationContext, it) }
+        for (kind in Kind.entries) {
+            dir(context, kind).listFiles { f -> f.isFile && f.extension.equals("pdf", true) }
+                ?.sortedBy { it.lastModified() }
+                ?.forEach { submit(context.applicationContext, it, kind) }
+        }
     }
 
     /** Stops the running conversion after its current page; its PDF is delivered. */
     fun cancelCurrent() = cancelConversion()
 
-    private fun submit(context: Context, pdf: File) {
+    private fun submit(context: Context, pdf: File, kind: Kind) {
         if (!queued.add(pdf.absolutePath)) return
         main.removeCallbacks(releaseIdleModels)
         _status.value?.let { _status.value = it.copy(waiting = queued.size - 1) }
         executor.execute {
             try {
-                convert(context, pdf)
+                when (kind) {
+                    Kind.EPUB -> convert(context, pdf)
+                    Kind.SEARCHABLE -> makeSearchable(context, pdf)
+                }
             } finally {
                 queued.remove(pdf.absolutePath)
                 if (queued.isEmpty()) {
@@ -99,27 +108,35 @@ object ConversionQueue {
         }
     }
 
+    private fun options(context: Context, title: String, ocr: Boolean) = ConversionOptions(
+        title = title,
+        pdfiumLib = "libpdfium.so",
+        ortLib = "libonnxruntime.so",
+        modelsDir = installModels(context)?.absolutePath,
+        ocr = ocr,
+        threads = THREADS,
+    )
+
+    private fun progressFor(context: Context, nm: NotificationManager, kind: Kind, name: String) =
+        object : ConversionProgress {
+            override fun onPage(done: UInt, total: UInt) =
+                report(context, nm, kind, name, done.toInt(), total.toInt())
+        }
+
+    private fun wakeLock(context: Context): PowerManager.WakeLock =
+        (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "InkPrint:convert")
+            .also { it.acquire(2 * 60 * 60 * 1000L) }
+
     private fun convert(context: Context, pdf: File) {
         val name = displayName(pdf.name)
-        val out = File(convertDir(context), pdf.nameWithoutExtension + ".epub")
+        val out = File(dir(context, Kind.EPUB), pdf.nameWithoutExtension + ".epub")
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val wake = (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "InkPrint:convert")
-        wake.acquire(2 * 60 * 60 * 1000L)
+        val wake = wakeLock(context)
         try {
-            report(context, nm, name, 0, 0)
-            val options = ConversionOptions(
-                title = name,
-                pdfiumLib = "libpdfium.so",
-                ortLib = "libonnxruntime.so",
-                modelsDir = installModels(context)?.absolutePath,
-                ocr = Settings.ocr(context),
-                threads = THREADS,
-            )
-            val progress = object : ConversionProgress {
-                override fun onPage(done: UInt, total: UInt) =
-                    report(context, nm, name, done.toInt(), total.toInt())
-            }
+            report(context, nm, Kind.EPUB, name, 0, 0)
+            val options = options(context, name, Settings.ocr(context))
+            val progress = progressFor(context, nm, Kind.EPUB, name)
             val stats = convertPdfToEpub(pdf.absolutePath, out.absolutePath, options, progress)
             Log.i(TAG, "Converted $name: $stats")
             val epub = moveTo(out, JobStorage.jobDir(context))
@@ -143,6 +160,43 @@ object ConversionQueue {
         }
     }
 
+    /** Adds an OCR text layer to the scanned pages of a PDF the PDF printer received. */
+    private fun makeSearchable(context: Context, pdf: File) {
+        val name = displayName(pdf.name)
+        val out = File(context.cacheDir, "ocr-" + pdf.name)
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val wake = wakeLock(context)
+        try {
+            report(context, nm, Kind.SEARCHABLE, name, 0, 0)
+            val stats = makePdfSearchable(
+                pdf.absolutePath, out.absolutePath, options(context, name, true),
+                progressFor(context, nm, Kind.SEARCHABLE, name)
+            )
+            Log.i(TAG, "Text layer for $name: $stats")
+            val text = if (stats.ocrPages > 0u) {
+                // Same name, so the reader keeps it in place of the original.
+                out.copyTo(pdf, overwrite = true)
+                "Searchable PDF · text recognised on ${stats.ocrPages} of ${stats.pages} page" +
+                    if (stats.pages == 1u) "" else "s"
+            } else {
+                "Saved · the PDF already has its text"
+            }
+            val kept = moveTo(pdf, JobStorage.jobDir(context))
+            val uri = JobStorage.deliver(context, kept) ?: fileUri(context, kept)
+            notifyResult(context, nm, name, text, uri, "application/pdf")
+        } catch (e: ConvertException.Cancelled) {
+            Log.i(TAG, "Text layer for $name cancelled")
+            deliverPdfInstead(context, nm, pdf, name, "Text recognition cancelled — saved the PDF as received")
+        } catch (e: Exception) {
+            Log.e(TAG, "Text layer for $name failed", e)
+            deliverPdfInstead(context, nm, pdf, name, "Text recognition failed — saved the PDF as received")
+        } finally {
+            nm.cancel(NOTIFICATION_ID)
+            out.delete()
+            if (wake.isHeld) wake.release()
+        }
+    }
+
     private fun success(stats: ConversionStats): String {
         val pages = "${stats.pages} page" + if (stats.pages == 1u) "" else "s"
         return when {
@@ -159,8 +213,8 @@ object ConversionQueue {
         notifyResult(context, nm, name, message, uri, "application/pdf")
     }
 
-    private fun report(context: Context, nm: NotificationManager, name: String, done: Int, total: Int) {
-        _status.value = Status(name, done, total, (queued.size - 1).coerceAtLeast(0))
+    private fun report(context: Context, nm: NotificationManager, kind: Kind, name: String, done: Int, total: Int) {
+        _status.value = Status(kind, name, done, total, (queued.size - 1).coerceAtLeast(0))
         val cancel = PendingIntent.getService(
             context, 0,
             Intent(context, PrinterService::class.java).setAction(PrinterService.ACTION_CANCEL_CONVERSION),
@@ -171,7 +225,12 @@ object ConversionQueue {
             NOTIFICATION_ID,
             NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_popup_sync)
-                .setContentTitle("Converting “$name” to EPUB")
+                .setContentTitle(
+                    when (kind) {
+                        Kind.EPUB -> "Converting “$name” to EPUB"
+                        Kind.SEARCHABLE -> "Recognising text in “$name”"
+                    }
+                )
                 .setContentText(text)
                 .setProgress(total, done, total == 0)
                 .setOngoing(true)

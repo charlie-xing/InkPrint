@@ -216,9 +216,14 @@ class PrinterService : Service() {
         Log.i(TAG, "New print job: $fileName ($sizeBytes bytes, $output) -> $filePath")
 
         val jobFile = java.io.File(filePath)
-        if (output == OutputFormat.EPUB) {
-            // Converted in the background; the queue delivers and notifies.
-            ConversionQueue.enqueue(this, jobFile)
+        // Converted in the background; the queue delivers and notifies.
+        val background = when {
+            output == OutputFormat.EPUB -> ConversionQueue.Kind.EPUB
+            Settings.searchablePdf(this) -> ConversionQueue.Kind.SEARCHABLE
+            else -> null
+        }
+        if (background != null) {
+            ConversionQueue.enqueue(this, jobFile, background)
             sendBroadcast(Intent(BROADCAST_JOB_RECEIVED).setPackage(packageName))
             return
         }

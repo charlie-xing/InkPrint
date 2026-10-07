@@ -360,7 +360,8 @@ class MainActivity : ComponentActivity() {
                             "• oar-ocr — Apache-2.0\n" +
                             "• ONNX Runtime — Microsoft, MIT\n" +
                             "• PDFium — BSD-3-Clause / Apache-2.0 (pdfium-binaries build)\n" +
-                            "• pdfium-render — MIT / Apache-2.0\n\n" +
+                            "• pdfium-render — MIT / Apache-2.0\n" +
+                            "• lopdf — MIT\n\n" +
                             "Details: THIRD_PARTY_NOTICES.md at github.com/charlie-xing/InkPrint",
                             fontSize = 13.sp
                         )
@@ -408,6 +409,7 @@ fun EpubCard(epubPrinter: Boolean, onEpubPrinter: (Boolean) -> Unit) {
     val context = LocalContext.current
     var keepPdf by remember { mutableStateOf(Settings.keepPdf(context)) }
     var ocr by remember { mutableStateOf(Settings.ocr(context)) }
+    var searchable by remember { mutableStateOf(Settings.searchablePdf(context)) }
     val status by ConversionQueue.status.collectAsState()
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -427,10 +429,25 @@ fun EpubCard(epubPrinter: Boolean, onEpubPrinter: (Boolean) -> Unit) {
                     Settings.setKeepPdf(context, it); keepPdf = it
                 }
             }
+            HorizontalDivider()
+            Text("PDF printer", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            SettingSwitch(
+                "Searchable scans",
+                "Add the recognised text, invisibly, to scanned pages: select, copy, search and look up words, with the page unchanged",
+                searchable
+            ) {
+                Settings.setSearchablePdf(context, it); searchable = it
+            }
             status?.let { s ->
                 HorizontalDivider()
-                Text("Converting “${s.name}”", fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    when (s.kind) {
+                        ConversionQueue.Kind.EPUB -> "Converting “${s.name}”"
+                        ConversionQueue.Kind.SEARCHABLE -> "Recognising text in “${s.name}”"
+                    },
+                    fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
                 if (s.total > 0) {
                     LinearProgressIndicator(
                         progress = { s.done.toFloat() / s.total },

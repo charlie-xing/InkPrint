@@ -13,6 +13,7 @@ build contains none of them.
 | PDFium (pdfium-binaries build) | Reading and rendering PDFs | BSD-3-Clause / Apache-2.0 | https://pdfium.googlesource.com/pdfium, https://github.com/bblanchon/pdfium-binaries |
 | pdfium-render | Rust bindings for PDFium | MIT / Apache-2.0 | https://github.com/ajrcarey/pdfium-render |
 | zip, image | EPUB packaging, image encoding | MIT | https://crates.io/crates/zip, https://crates.io/crates/image |
+| lopdf | Adding the text layer to searchable PDFs | MIT | https://crates.io/crates/lopdf |
 
 The ONNX models were exported from the PaddlePaddle originals by the oar-ocr
 project; `android/app/src/full/assets/models/SHA256SUMS` pins the exact files.

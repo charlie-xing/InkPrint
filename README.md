@@ -150,6 +150,14 @@ being converted and has a Cancel button.
 - Running headers, footers and page numbers are dropped; paragraphs split by a
   page break are joined; long documents are split into chapters.
 
+### Searchable scans
+
+With **Searchable scans** on (under *PDF printer* in the app), scanned PDFs sent
+to the plain InkPrint printer get the recognised text as an invisible layer:
+the page looks exactly the same, but its text can be selected, copied,
+searched and looked up in the reader. PDFs that already have their text are
+saved as received. About 9 s per scanned page on a BOOX Note Air.
+
 The EPUB replaces the PDF unless *Also keep the PDF* is on. If a conversion
 fails or is cancelled, the PDF is saved instead. Turning the EPUB printer off
 removes it from the network. The F-Droid build does not include it.
