@@ -208,6 +208,9 @@ class MainActivity : ComponentActivity() {
                     else -> HelpTab(addresses, port.toString(), epubPrinter)
                 }
             }
+            // Whatever tab is open, a running conversion stays in sight.
+            val status by ConversionQueue.status.collectAsState()
+            status?.takeIf { tab != 0 }?.let { ProgressStrip(it) }
             InkTabBar(
                 tabs = listOf(
                     stringResource(R.string.tab_printer),
@@ -296,6 +299,39 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** One line above the tab bar: what is being converted, how far, and Cancel. */
+    @Composable
+    private fun ProgressStrip(s: ConversionQueue.Status) {
+        Column(Modifier.fillMaxWidth()) {
+            Box(Modifier.fillMaxWidth().height(2.dp).background(Ink))
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        when (s.kind) {
+                            ConversionQueue.Kind.EPUB -> stringResource(R.string.progress_converting, s.name)
+                            ConversionQueue.Kind.SEARCHABLE -> stringResource(R.string.progress_recognising, s.name)
+                        } + " · " + progressText(s),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    InkProgress(if (s.total > 0) s.done.toFloat() / s.total else 0f, height = 10.dp)
+                }
+                Spacer(Modifier.width(12.dp))
+                InkButton(stringResource(R.string.cancel), onClick = { ConversionQueue.cancelCurrent() }, height = 48.dp)
+            }
+        }
+    }
+
+    @Composable
+    private fun progressText(s: ConversionQueue.Status): String =
+        if (s.total > 0) stringResource(R.string.progress_page, s.done, s.total)
+        else stringResource(R.string.progress_preparing)
+
     @Composable
     private fun ConversionStatus(s: ConversionQueue.Status) {
         InkCard {
@@ -309,13 +345,10 @@ class MainActivity : ComponentActivity() {
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
+            InkProgress(if (s.total > 0) s.done.toFloat() / s.total else 0f)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        if (s.total > 0) stringResource(R.string.progress_page, s.done, s.total)
-                        else stringResource(R.string.progress_preparing),
-                        fontSize = 16.sp
-                    )
+                    Text(progressText(s), fontSize = 16.sp)
                     if (s.waiting > 0) Text(stringResource(R.string.progress_waiting, s.waiting), fontSize = 14.sp)
                 }
                 InkButton(stringResource(R.string.cancel), onClick = { ConversionQueue.cancelCurrent() })

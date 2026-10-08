@@ -339,6 +339,17 @@ fun CodeBlock(text: String) {
     }
 }
 
+/**
+ * Progress as a black bar in a frame. It only changes when progress does
+ * (every few seconds at most): nothing moves in between.
+ */
+@Composable
+fun InkProgress(fraction: Float, modifier: Modifier = Modifier, height: Dp = 14.dp) {
+    Box(modifier.fillMaxWidth().height(height).border(1.5.dp, Ink)) {
+        Box(Modifier.fillMaxHeight().fillMaxWidth(fraction.coerceIn(0f, 1f)).background(Ink))
+    }
+}
+
 /** A short label in a frame (file kind: PDF, EPUB, folder). */
 @Composable
 fun InkTag(text: String, modifier: Modifier = Modifier) {
