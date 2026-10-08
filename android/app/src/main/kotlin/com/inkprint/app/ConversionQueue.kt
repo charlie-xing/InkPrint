@@ -146,13 +146,13 @@ object ConversionQueue {
             } else {
                 pdf.delete()
             }
-            notifyResult(context, nm, name, success(stats), uri, "application/epub+zip")
+            notifyResult(context, nm, name, success(context, stats), uri, "application/epub+zip")
         } catch (e: ConvertException.Cancelled) {
             Log.i(TAG, "Conversion of $name cancelled")
-            deliverPdfInstead(context, nm, pdf, name, "EPUB conversion cancelled — saved the PDF")
+            deliverPdfInstead(context, nm, pdf, name, Lang.string(context, R.string.result_epub_cancelled))
         } catch (e: Exception) {
             Log.e(TAG, "Conversion of $name failed", e)
-            deliverPdfInstead(context, nm, pdf, name, "EPUB conversion failed — saved the PDF")
+            deliverPdfInstead(context, nm, pdf, name, Lang.string(context, R.string.result_epub_failed))
         } finally {
             nm.cancel(NOTIFICATION_ID)
             out.delete()
@@ -176,20 +176,19 @@ object ConversionQueue {
             val text = if (stats.ocrPages > 0u) {
                 // Same name, so the reader keeps it in place of the original.
                 out.copyTo(pdf, overwrite = true)
-                "Searchable PDF · text recognised on ${stats.ocrPages} of ${stats.pages} page" +
-                    if (stats.pages == 1u) "" else "s"
+                Lang.string(context, R.string.result_searchable, stats.ocrPages.toInt(), stats.pages.toInt())
             } else {
-                "Saved · the PDF already has its text"
+                Lang.string(context, R.string.result_searchable_none)
             }
             val kept = moveTo(pdf, JobStorage.jobDir(context))
             val uri = JobStorage.deliver(context, kept) ?: fileUri(context, kept)
             notifyResult(context, nm, name, text, uri, "application/pdf")
         } catch (e: ConvertException.Cancelled) {
             Log.i(TAG, "Text layer for $name cancelled")
-            deliverPdfInstead(context, nm, pdf, name, "Text recognition cancelled — saved the PDF as received")
+            deliverPdfInstead(context, nm, pdf, name, Lang.string(context, R.string.result_ocr_cancelled))
         } catch (e: Exception) {
             Log.e(TAG, "Text layer for $name failed", e)
-            deliverPdfInstead(context, nm, pdf, name, "Text recognition failed — saved the PDF as received")
+            deliverPdfInstead(context, nm, pdf, name, Lang.string(context, R.string.result_ocr_failed))
         } finally {
             nm.cancel(NOTIFICATION_ID)
             out.delete()
@@ -197,12 +196,11 @@ object ConversionQueue {
         }
     }
 
-    private fun success(stats: ConversionStats): String {
-        val pages = "${stats.pages} page" + if (stats.pages == 1u) "" else "s"
+    private fun success(ctx: Context, stats: ConversionStats): String {
         return when {
-            stats.ocrPages > 0u -> "EPUB ready · $pages, ${stats.ocrPages} recognised by OCR"
-            stats.imagePages > 0u -> "EPUB ready · $pages, ${stats.imagePages} kept as pictures"
-            else -> "EPUB ready · $pages"
+            stats.ocrPages > 0u -> Lang.string(ctx, R.string.result_epub_ocr, stats.pages.toInt(), stats.ocrPages.toInt())
+            stats.imagePages > 0u -> Lang.string(ctx, R.string.result_epub_pictures, stats.pages.toInt(), stats.imagePages.toInt())
+            else -> Lang.string(ctx, R.string.result_epub, stats.pages.toInt())
         }
     }
 
@@ -213,29 +211,36 @@ object ConversionQueue {
         notifyResult(context, nm, name, message, uri, "application/pdf")
     }
 
+    /** When progress was last shown: e-ink redraws are slow, so at most every 2 s. */
+    private var lastReport = 0L
+
     private fun report(context: Context, nm: NotificationManager, kind: Kind, name: String, done: Int, total: Int) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (done != 0 && done != total && now - lastReport < 2000) return
+        lastReport = now
         _status.value = Status(kind, name, done, total, (queued.size - 1).coerceAtLeast(0))
         val cancel = PendingIntent.getService(
             context, 0,
             Intent(context, PrinterService::class.java).setAction(PrinterService.ACTION_CANCEL_CONVERSION),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val text = if (total == 0) "Preparing…" else "Page $done of $total"
+        val text = if (total == 0) Lang.string(context, R.string.progress_preparing)
+            else Lang.string(context, R.string.progress_page, done, total)
         nm.notify(
             NOTIFICATION_ID,
             NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_popup_sync)
                 .setContentTitle(
                     when (kind) {
-                        Kind.EPUB -> "Converting “$name” to EPUB"
-                        Kind.SEARCHABLE -> "Recognising text in “$name”"
+                        Kind.EPUB -> Lang.string(context, R.string.progress_converting, name)
+                        Kind.SEARCHABLE -> Lang.string(context, R.string.progress_recognising, name)
                     }
                 )
                 .setContentText(text)
                 .setProgress(total, done, total == 0)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .addAction(android.R.drawable.ic_delete, "Cancel", cancel)
+                .addAction(android.R.drawable.ic_delete, Lang.string(context, R.string.cancel), cancel)
                 .build()
         )
     }

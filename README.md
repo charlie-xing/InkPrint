@@ -125,6 +125,11 @@ Privacy policy — [English](docs/privacy-policy.html) · [中文](docs/privacy-
 
 ## Usage
 
+The app is built for e-ink: pure black and white, no animations, four tabs
+(Printer, Files, Settings, Help) that each fit one screen, and large text and
+buttons. English, Simplified Chinese and Traditional Chinese — follows the
+system language or pick one under *Settings*.
+
 1. Install the APK on your BOOX (or other android device) device
 2. Open InkPrint and tap **Start Printer Service**
 3. Add the printer on your computer/phone (see below)

@@ -28,6 +28,10 @@ class PrinterService : Service() {
         const val ACTION_CANCEL_CONVERSION = "com.inkprint.app.CANCEL_CONVERSION"
         const val BROADCAST_JOB_RECEIVED = "com.inkprint.app.JOB_RECEIVED"
         const val DEFAULT_PORT: UShort = 6310u
+
+        private val _running = kotlinx.coroutines.flow.MutableStateFlow(false)
+        /** Whether the printer server is up, for the UI. */
+        val running: kotlinx.coroutines.flow.StateFlow<Boolean> = _running
     }
 
     private var isRunning = false
@@ -81,7 +85,7 @@ class PrinterService : Service() {
 
         val storageDir = JobStorage.jobDir(this)
 
-        startForeground(NOTIFICATION_ID_SERVICE, buildServiceNotification("Starting..."))
+        startForeground(NOTIFICATION_ID_SERVICE, buildServiceNotification(Lang.string(this, R.string.notif_starting)))
 
         val wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         multicastLock = wifiManager.createMulticastLock("inkprint_mdns").also {
@@ -110,16 +114,17 @@ class PrinterService : Service() {
         }
 
         isRunning = started
+        _running.value = started
         if (started) {
             val ip = try { getLocalIp() } catch (e: Exception) { "unknown" }
             Log.i(TAG, "InkPrint server started on $ip:$DEFAULT_PORT")
-            updateNotification("Running on $ip:$DEFAULT_PORT")
+            updateNotification(Lang.string(this, R.string.notif_running_on, "$ip:$DEFAULT_PORT"))
             registerMdns(ip)
             // EPUB jobs a killed process left half done
             if (BuildConfig.EPUB) ConversionQueue.resume(this)
         } else {
             Log.e(TAG, "Failed to start InkPrint server")
-            updateNotification("Failed to start")
+            updateNotification(Lang.string(this, R.string.notif_failed_to_start))
         }
     }
 
@@ -209,6 +214,7 @@ class PrinterService : Service() {
             wifiLock = null
         }
         isRunning = false
+        _running.value = false
         Log.i(TAG, "InkPrint server stopped")
     }
 
@@ -251,7 +257,7 @@ class PrinterService : Service() {
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID_JOBS)
             .setSmallIcon(android.R.drawable.ic_menu_save)
-            .setContentTitle("New document received")
+            .setContentTitle(Lang.string(this, R.string.notif_document_received))
             .setContentText("$fileName (${formatSize(sizeBytes)})")
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
@@ -280,7 +286,7 @@ class PrinterService : Service() {
             .setContentTitle("InkPrint")
             .setContentText(status)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_delete, "Stop", stopPendingIntent)
+            .addAction(android.R.drawable.ic_delete, Lang.string(this, R.string.notif_stop), stopPendingIntent)
             .build()
     }
 
@@ -292,13 +298,13 @@ class PrinterService : Service() {
     private fun createNotificationChannels() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID_SERVICE, "Printer Service", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL_ID_SERVICE, Lang.string(this, R.string.channel_service), NotificationManager.IMPORTANCE_LOW)
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID_JOBS, "Print Jobs", NotificationManager.IMPORTANCE_DEFAULT)
+            NotificationChannel(CHANNEL_ID_JOBS, Lang.string(this, R.string.channel_jobs), NotificationManager.IMPORTANCE_DEFAULT)
         )
         nm.createNotificationChannel(
-            NotificationChannel(ConversionQueue.CHANNEL_ID, "EPUB Conversion", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(ConversionQueue.CHANNEL_ID, Lang.string(this, R.string.channel_conversion), NotificationManager.IMPORTANCE_LOW)
         )
     }
 

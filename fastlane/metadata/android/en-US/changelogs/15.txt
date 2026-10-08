@@ -1,3 +1,4 @@
 - New "InkPrint EPUB" printer: print to it to get a reflowable e-book instead of a PDF, rebuilt on the device, with on-device OCR for scanned pages (Google Play and GitHub builds only; the F-Droid build does not include it)
 - "Searchable scans" option for the PDF printer: scanned PDFs get their text recognised on the device and added as an invisible layer, so it can be selected, searched and looked up while the page looks unchanged
+- New black-and-white interface for e-ink screens: four tabs that each fit one screen, large text and buttons, no animations; English, Simplified and Traditional Chinese
 - Smaller native library

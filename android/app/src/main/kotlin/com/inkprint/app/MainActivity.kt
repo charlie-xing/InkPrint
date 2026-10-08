@@ -8,39 +8,30 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.*
 
 class MainActivity : ComponentActivity() {
 
@@ -67,7 +58,7 @@ class MainActivity : ComponentActivity() {
             try {
                 SaveFolder.setTree(this, uri)
             } catch (e: SecurityException) {
-                Toast.makeText(this, "Cannot use this folder: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, getString(R.string.folder_unusable, e.message), Toast.LENGTH_LONG).show()
                 return@registerForActivityResult
             }
             lifecycleScope.launch {
@@ -76,6 +67,10 @@ class MainActivity : ComponentActivity() {
                 jobTick++
             }
         }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(Lang.wrap(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -88,11 +83,7 @@ class MainActivity : ComponentActivity() {
             RECEIVER_NOT_EXPORTED
         )
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    InkPrintScreen()
-                }
-            }
+            InkTheme { InkPrintApp() }
         }
     }
 
@@ -168,7 +159,7 @@ class MainActivity : ComponentActivity() {
             })
         } catch (e: Exception) {
             android.util.Log.e("MainActivity", "Cannot open file: ${e.message}")
-            Toast.makeText(this, "No app can open this file", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.no_app_to_open), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -185,213 +176,273 @@ class MainActivity : ComponentActivity() {
         try {
             folderPicker.launch(SaveFolder.INITIAL_URI)
         } catch (e: ActivityNotFoundException) {
-            Toast.makeText(this, "This device has no system folder picker", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.no_folder_picker), Toast.LENGTH_LONG).show()
         }
     }
 
-    // ── Main screen ──────────────────────────────────────────────────────────
+    // ── Screens ──────────────────────────────────────────────────────────────
 
+    /**
+     * Four tabs, each meant to fit one screen: e-ink scrolls badly, so the
+     * app pages instead (scrolling stays as a fallback on small screens).
+     */
     @Composable
-    fun InkPrintScreen() {
-        var isRunning by remember { mutableStateOf(false) }
-        val port          = PrinterService.DEFAULT_PORT.toInt()
-        // Re-read on resume: Wi-Fi or Tailscale may have come up or changed address
-        val addresses     = remember(jobTick) { PrinterAddresses.list() }
-        val onWifi        = addresses.any { it.label == "Wi-Fi" || it.label == "Ethernet" }
-
-        val files = remember(jobTick) { getStoredFiles() }
+    fun InkPrintApp() {
+        var tab by rememberSaveable { mutableIntStateOf(0) }
+        val running by PrinterService.running.collectAsState()
         var epubPrinter by remember { mutableStateOf(Settings.epubPrinter(this@MainActivity)) }
+        val port = PrinterService.DEFAULT_PORT.toInt()
+        // Re-read on resume: Wi-Fi or Tailscale may have come up or changed address
+        val addresses = remember(jobTick) { PrinterAddresses.list() }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .safeDrawingPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text("InkPrint", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(2.dp))
-            Text("IPP Virtual Printer", color = Color.Gray, fontSize = 14.sp)
-            Spacer(Modifier.height(14.dp))
-
-            // Network warning: nothing reachable, or reachable over VPN only
-            if (!onWifi) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
-                ) {
-                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
-                        Text("⚠️", fontSize = 16.sp)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (addresses.isEmpty())
-                                "WiFi not connected — devices on the LAN cannot reach this printer. Please connect to WiFi (or a VPN such as Tailscale) first."
-                            else
-                                "WiFi not connected — only devices on ${addresses.joinToString(" / ") { it.label }} can reach this printer, and auto-discovery is unavailable.",
-                            fontSize = 13.sp, color = Color(0xFFBF360C)
-                        )
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-            }
-
-            // Start / Stop
-            Button(
-                onClick = {
-                    if (isRunning) { stopPrinterService(); isRunning = false }
-                    else { startPrinterService(); isRunning = true }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRunning) Color(0xFFD32F2F) else Color(0xFF388E3C)
-                ),
-                modifier = Modifier.fillMaxWidth().height(56.dp)
-            ) {
-                Text(if (isRunning) "Stop Printer Service" else "Start Printer Service", fontSize = 17.sp)
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            // Status
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row {
-                        Text("Status: ", fontWeight = FontWeight.Medium)
-                        Text(
-                            if (isRunning) "Running" else "Stopped",
-                            color = if (isRunning) Color(0xFF388E3C) else Color.Gray
-                        )
-                    }
-                    if (isRunning) {
-                        addresses.forEach { addr ->
-                            Spacer(Modifier.height(4.dp))
-                            Text(addr.label, fontSize = 12.sp, color = Color.Gray)
-                            CopyableText(addr.printerUrl(port))
-                            if (epubPrinter) CopyableText(addr.epubPrinterUrl(port))
-                            if (addr.label == "VPN") {
-                                Text(
-                                    "Works only if this VPN lets its devices connect to each other.",
-                                    fontSize = 11.sp, color = Color.Gray
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (BuildConfig.EPUB) {
-                Spacer(Modifier.height(12.dp))
-                EpubCard(
-                    epubPrinter = epubPrinter,
-                    onEpubPrinter = { on ->
+        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when (tab) {
+                    0 -> PrinterTab(running, addresses, port, epubPrinter)
+                    1 -> FilesTab()
+                    2 -> SettingsTab(epubPrinter, onEpubPrinter = { on ->
                         Settings.setEpubPrinter(this@MainActivity, on)
                         epubPrinter = on
-                        if (isRunning) restartPrinterService()
-                    }
+                        if (running) restartPrinterService()
+                    })
+                    else -> HelpTab(addresses, port.toString(), epubPrinter)
+                }
+            }
+            InkTabBar(
+                tabs = listOf(
+                    stringResource(R.string.tab_printer),
+                    stringResource(R.string.tab_files),
+                    stringResource(R.string.tab_settings),
+                    stringResource(R.string.tab_help),
+                ),
+                selected = tab,
+                onSelect = { tab = it }
+            )
+        }
+    }
+
+    @Composable
+    private fun TabPage(content: @Composable ColumnScope.() -> Unit) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            content = content
+        )
+    }
+
+    @Composable
+    private fun PrinterTab(running: Boolean, addresses: List<PrinterAddress>, port: Int, epubPrinter: Boolean) {
+        val status by ConversionQueue.status.collectAsState()
+        val onWifi = addresses.any { it.label == "Wi-Fi" || it.label == "Ethernet" }
+        TabPage {
+            Text("InkPrint", fontSize = 30.sp, fontWeight = FontWeight.Bold)
+
+            // Status: inverted while running, so it reads at a glance.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(if (running) Ink else Paper)
+                    .border(2.dp, Ink)
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(if (running) R.string.status_running else R.string.status_stopped),
+                    color = if (running) Paper else Ink,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                addresses.firstOrNull()?.let {
+                    if (running) Text(it.ip, color = Paper, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            if (!onWifi) {
+                InkNotice(
+                    if (addresses.isEmpty()) stringResource(R.string.warn_no_network)
+                    else stringResource(R.string.warn_vpn_only, addresses.joinToString(" / ") { it.label })
                 )
             }
 
-            Spacer(Modifier.height(16.dp))
+            InkButton(
+                text = stringResource(if (running) R.string.stop_service else R.string.start_service),
+                primary = !running,
+                onClick = { if (running) stopPrinterService() else startPrinterService() },
+                modifier = Modifier.fillMaxWidth(),
+                height = 64.dp
+            )
 
-            // File browser
-            val tree = treeUri
-            if (tree != null) {
-                FolderBrowserCard(
-                    tree = tree,
-                    refreshTick = jobTick,
-                    onOpen = { openUri(it.uri, it.mimeType) },
-                    onShare = { shareUri(it.uri, it.mimeType) },
-                    onChangeFolder = { pickSaveFolder() }
-                )
+            if (running) {
+                addresses.forEach { addr ->
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(addr.label, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.pdf_printer), fontSize = 14.sp)
+                        CopyableText(addr.printerUrl(port))
+                        if (epubPrinter) {
+                            Text(stringResource(R.string.epub_printer), fontSize = 14.sp)
+                            CopyableText(addr.epubPrinterUrl(port))
+                        }
+                        if (addr.label == "VPN") {
+                            Text(stringResource(R.string.vpn_note), fontSize = 14.sp)
+                        }
+                    }
+                }
             } else {
-                FileBrowserCard(
-                    files = files,
-                    onOpen = { openFile(it) },
-                    onChooseFolder = { pickSaveFolder() }
-                )
+                Text(stringResource(R.string.start_hint), fontSize = 16.sp)
             }
 
-            Spacer(Modifier.height(12.dp))
+            status?.let { s -> ConversionStatus(s) }
+        }
+    }
 
-            // Collapsible help
-            AddPrinterInstructionsCard(addresses = addresses, port = port.toString(), epub = epubPrinter)
+    @Composable
+    private fun ConversionStatus(s: ConversionQueue.Status) {
+        InkCard {
+            Text(
+                when (s.kind) {
+                    ConversionQueue.Kind.EPUB -> stringResource(R.string.progress_converting, s.name)
+                    ConversionQueue.Kind.SEARCHABLE -> stringResource(R.string.progress_recognising, s.name)
+                },
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (s.total > 0) stringResource(R.string.progress_page, s.done, s.total)
+                        else stringResource(R.string.progress_preparing),
+                        fontSize = 16.sp
+                    )
+                    if (s.waiting > 0) Text(stringResource(R.string.progress_waiting, s.waiting), fontSize = 14.sp)
+                }
+                InkButton(stringResource(R.string.cancel), onClick = { ConversionQueue.cancelCurrent() })
+            }
+        }
+    }
 
-            Spacer(Modifier.height(16.dp))
+    @Composable
+    private fun FilesTab() {
+        // Rows per page from the space available, so a page never scrolls.
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val rows = ((maxHeight - 260.dp) / 76.dp).toInt().coerceIn(3, 12)
+            TabPage {
+                val tree = treeUri
+                if (tree != null) {
+                    FolderBrowser(
+                        tree = tree,
+                        refreshTick = jobTick,
+                        pageSize = rows,
+                        onOpen = { openUri(it.uri, it.mimeType) },
+                        onShare = { shareUri(it.uri, it.mimeType) },
+                        onChangeFolder = { pickSaveFolder() }
+                    )
+                } else {
+                    val files = remember(jobTick) { getStoredFiles() }
+                    FileList(
+                        files = files,
+                        pageSize = rows,
+                        onOpen = { openFile(it) },
+                        onChooseFolder = { pickSaveFolder() }
+                    )
+                }
+            }
+        }
+    }
 
-            // Exit + Feedback
-            var showFeedbackDialog by remember { mutableStateOf(false) }
-            var showLicenses by remember { mutableStateOf(false) }
+    @Composable
+    private fun SettingsTab(epubPrinter: Boolean, onEpubPrinter: (Boolean) -> Unit) {
+        var keepPdf by remember { mutableStateOf(Settings.keepPdf(this)) }
+        var ocr by remember { mutableStateOf(Settings.ocr(this)) }
+        var searchable by remember { mutableStateOf(Settings.searchablePdf(this)) }
+        var dialog by remember { mutableStateOf<String?>(null) }
 
-            if (showFeedbackDialog) {
-                AlertDialog(
-                    onDismissRequest = { showFeedbackDialog = false },
-                    title = { Text("Feedback") },
-                    text = {
-                        Text(
-                            "InkPrint is an open-source project.\n\n" +
-                            "If you have any suggestions or encounter issues, feel free to send an email to:\n\n" +
-                            "xjohn1666@gmail.com\n\n" +
-                            "The author will get back to you as soon as possible. Thank you for your support!"
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showFeedbackDialog = false }) {
-                            Text("OK")
-                        }
-                    },
-                    dismissButton = {
-                        if (BuildConfig.EPUB) {
-                            TextButton(onClick = { showFeedbackDialog = false; showLicenses = true }) {
-                                Text("Open-source licenses")
-                            }
-                        }
+        TabPage {
+            InkHeading(stringResource(R.string.language))
+            InkSegmented(
+                options = listOf(
+                    Lang.Choice.SYSTEM to stringResource(R.string.language_system),
+                    Lang.Choice.ENGLISH to "English",
+                    Lang.Choice.SIMPLIFIED to "简体中文",
+                    Lang.Choice.TRADITIONAL to "繁體中文",
+                ),
+                selected = Lang.choice(this@MainActivity),
+                onSelect = { choice ->
+                    if (choice != Lang.choice(this@MainActivity)) {
+                        Lang.set(this@MainActivity, choice)
+                        recreate()
                     }
-                )
+                }
+            )
+
+            if (BuildConfig.EPUB) {
+                InkHeading(stringResource(R.string.epub_printer))
+                Text(stringResource(R.string.epub_printer_about), fontSize = 15.sp)
+                InkToggle(stringResource(R.string.epub_printer_toggle), stringResource(R.string.epub_printer_toggle_sub), epubPrinter, onEpubPrinter)
+                if (epubPrinter) {
+                    InkToggle(stringResource(R.string.ocr_toggle), stringResource(R.string.ocr_toggle_sub), ocr) {
+                        Settings.setOcr(this@MainActivity, it); ocr = it
+                    }
+                    InkToggle(stringResource(R.string.keep_pdf_toggle), stringResource(R.string.keep_pdf_toggle_sub), keepPdf) {
+                        Settings.setKeepPdf(this@MainActivity, it); keepPdf = it
+                    }
+                }
+
+                InkHeading(stringResource(R.string.pdf_printer))
+                InkToggle(stringResource(R.string.searchable_toggle), stringResource(R.string.searchable_toggle_sub), searchable) {
+                    Settings.setSearchablePdf(this@MainActivity, it); searchable = it
+                }
             }
 
-            if (showLicenses) {
-                AlertDialog(
-                    onDismissRequest = { showLicenses = false },
-                    title = { Text("Open-source licenses") },
-                    text = {
-                        Text(
-                            "InkPrint is MIT-licensed. The EPUB printer uses:\n\n" +
-                            "• PP-OCRv6 and PP-DocLayout-S models — PaddlePaddle (PaddleOCR / PaddleX), Apache-2.0\n" +
+            InkHeading(stringResource(R.string.save_folder))
+            Text(
+                treeUri?.let { SaveFolder.label(it) } ?: stringResource(R.string.save_folder_default),
+                fontSize = 16.sp
+            )
+            InkButton(
+                stringResource(if (treeUri == null) R.string.choose_folder else R.string.change_folder),
+                onClick = { pickSaveFolder() },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            InkHeading(stringResource(R.string.about))
+            Text(stringResource(R.string.version, BuildConfig.VERSION_NAME), fontSize = 15.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                InkButton(stringResource(R.string.feedback), onClick = { dialog = "feedback" }, modifier = Modifier.weight(1f))
+                InkButton(stringResource(R.string.licenses), onClick = { dialog = "licenses" }, modifier = Modifier.weight(1f))
+            }
+            InkButton(stringResource(R.string.exit_app), onClick = { exitApp() }, modifier = Modifier.fillMaxWidth())
+        }
+
+        when (dialog) {
+            "feedback" -> InkDialog(
+                title = stringResource(R.string.feedback),
+                onDismiss = { dialog = null },
+                buttons = { InkButton(stringResource(R.string.ok), onClick = { dialog = null }, primary = true, modifier = Modifier.fillMaxWidth()) }
+            ) {
+                Text(stringResource(R.string.feedback_text, "xjohn1666@gmail.com"), fontSize = 16.sp)
+            }
+            "licenses" -> InkDialog(
+                title = stringResource(R.string.licenses),
+                onDismiss = { dialog = null },
+                buttons = { InkButton(stringResource(R.string.ok), onClick = { dialog = null }, primary = true, modifier = Modifier.fillMaxWidth()) }
+            ) {
+                Text(
+                    stringResource(R.string.licenses_intro) + "\n\n" +
+                        (if (BuildConfig.EPUB)
+                            "• PP-OCRv6, PP-DocLayout-S — PaddlePaddle, Apache-2.0\n" +
                             "• oar-ocr — Apache-2.0\n" +
                             "• ONNX Runtime — Microsoft, MIT\n" +
-                            "• PDFium — BSD-3-Clause / Apache-2.0 (pdfium-binaries build)\n" +
+                            "• PDFium — BSD-3-Clause / Apache-2.0\n" +
                             "• pdfium-render — MIT / Apache-2.0\n" +
-                            "• lopdf — MIT\n\n" +
-                            "Details: THIRD_PARTY_NOTICES.md at github.com/charlie-xing/InkPrint",
-                            fontSize = 13.sp
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showLicenses = false }) { Text("OK") }
-                    }
+                            "• lopdf — MIT\n\n"
+                        else "") +
+                        stringResource(R.string.licenses_more),
+                    fontSize = 15.sp
                 )
             }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { exitApp() },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFB71C1C))
-                ) {
-                    Text("Exit App", fontSize = 15.sp)
-                }
-                OutlinedButton(
-                    onClick = { showFeedbackDialog = true },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Feedback", fontSize = 15.sp)
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
         }
     }
 }
@@ -402,557 +453,15 @@ data class FileEntry(val name: String, val path: String, val sizeBytes: Long, va
         get() = name.replace(Regex("^\\d+_\\d+_"), "").replace('_', ' ').ifBlank { name }
 }
 
-// ── EPUB printer card ────────────────────────────────────────────────────────
-
-@Composable
-fun EpubCard(epubPrinter: Boolean, onEpubPrinter: (Boolean) -> Unit) {
-    val context = LocalContext.current
-    var keepPdf by remember { mutableStateOf(Settings.keepPdf(context)) }
-    var ocr by remember { mutableStateOf(Settings.ocr(context)) }
-    var searchable by remember { mutableStateOf(Settings.searchablePdf(context)) }
-    val status by ConversionQueue.status.collectAsState()
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("EPUB printer", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Text(
-                "Print to \"InkPrint EPUB\" to get a reflowable e-book instead of a PDF. " +
-                "Text, headings and pictures are rebuilt on this device; tables are kept as pictures.",
-                fontSize = 12.sp, color = Color.Gray
-            )
-            SettingSwitch("EPUB printer", "Offer \"InkPrint EPUB\" next to the PDF printer", epubPrinter, onEpubPrinter)
-            if (epubPrinter) {
-                SettingSwitch("Recognise scanned pages (OCR)", "Off: scanned pages stay pictures — faster", ocr) {
-                    Settings.setOcr(context, it); ocr = it
-                }
-                SettingSwitch("Also keep the PDF", "Save the original PDF next to the EPUB", keepPdf) {
-                    Settings.setKeepPdf(context, it); keepPdf = it
-                }
-            }
-            HorizontalDivider()
-            Text("PDF printer", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            SettingSwitch(
-                "Searchable scans",
-                "Add the recognised text, invisibly, to scanned pages: select, copy, search and look up words, with the page unchanged",
-                searchable
-            ) {
-                Settings.setSearchablePdf(context, it); searchable = it
-            }
-            status?.let { s ->
-                HorizontalDivider()
-                Text(
-                    when (s.kind) {
-                        ConversionQueue.Kind.EPUB -> "Converting “${s.name}”"
-                        ConversionQueue.Kind.SEARCHABLE -> "Recognising text in “${s.name}”"
-                    },
-                    fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-                if (s.total > 0) {
-                    LinearProgressIndicator(
-                        progress = { s.done.toFloat() / s.total },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                } else {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        (if (s.total > 0) "Page ${s.done} of ${s.total}" else "Preparing…") +
-                            (if (s.waiting > 0) " · ${s.waiting} more waiting" else ""),
-                        fontSize = 12.sp, color = Color.Gray, modifier = Modifier.weight(1f)
-                    )
-                    TextButton(onClick = { ConversionQueue.cancelCurrent() }) { Text("Cancel") }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun SettingSwitch(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable { onChange(!checked) },
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 14.sp)
-            Text(subtitle, fontSize = 11.sp, color = Color.Gray)
-        }
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
-}
-
-// ── File browser card ────────────────────────────────────────────────────────
-
-internal const val PAGE_SIZE = 5
-
-@Composable
-fun FileBrowserCard(files: List<FileEntry>, onOpen: (String) -> Unit, onChooseFolder: () -> Unit) {
-    val dateFmt = remember { SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()) }
-    var currentPage by remember { mutableStateOf(0) }
-
-    // Reset to first page when file list changes
-    val totalPages = maxOf(1, (files.size + PAGE_SIZE - 1) / PAGE_SIZE)
-    if (currentPage >= totalPages) currentPage = 0
-
-    val pageFiles = files.drop(currentPage * PAGE_SIZE).take(PAGE_SIZE)
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Printed Files",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                Text("${files.size}", color = Color.Gray, fontSize = 13.sp)
-            }
-
-            Spacer(Modifier.height(6.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFFE8F0FE))
-                    .clickable { onChooseFolder() }
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Choose a save folder to organize files into folders, rename, move and delete them",
-                    fontSize = 12.sp,
-                    color = Color(0xFF1565C0),
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("Choose", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1565C0))
-            }
-            Spacer(Modifier.height(8.dp))
-
-            if (files.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("No files yet — print something!", color = Color.Gray, fontSize = 13.sp)
-                }
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    pageFiles.forEach { file ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFFF5F5F5))
-                                .clickable { onOpen(file.path) }
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(fileIcon(file.name), fontSize = 20.sp)
-                            Spacer(Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    file.displayName,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    "${dateFmt.format(Date(file.modifiedMs))}  ${formatSize(file.sizeBytes)}",
-                                    fontSize = 11.sp,
-                                    color = Color.Gray
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Pagination controls (only when more than one page)
-                if (totalPages > 1) {
-                    Spacer(Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        TextButton(
-                            onClick = { if (currentPage > 0) currentPage-- },
-                            enabled = currentPage > 0
-                        ) {
-                            Text("◀  Prev", fontSize = 13.sp)
-                        }
-                        Text(
-                            "${currentPage + 1} / $totalPages",
-                            fontSize = 13.sp,
-                            color = Color.Gray,
-                            textAlign = TextAlign.Center
-                        )
-                        TextButton(
-                            onClick = { if (currentPage < totalPages - 1) currentPage++ },
-                            enabled = currentPage < totalPages - 1
-                        ) {
-                            Text("Next  ▶", fontSize = 13.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-internal fun fileIcon(name: String) = when (name.substringAfterLast('.').lowercase()) {
-    "pdf" -> "\uD83D\uDCC4"
-    "epub" -> "\uD83D\uDCD6"
-    "ps"  -> "\uD83D\uDDA8"
-    else  -> "\uD83D\uDCC1"
+/** Short label for a file's kind, shown in a frame instead of a colour icon. */
+internal fun fileTag(name: String) = when (name.substringAfterLast('.').lowercase()) {
+    "pdf" -> "PDF"
+    "epub" -> "EPUB"
+    else -> name.substringAfterLast('.', "").uppercase().take(4).ifEmpty { "FILE" }
 }
 
 internal fun formatSize(bytes: Long): String = when {
     bytes < 1024            -> "$bytes B"
     bytes < 1024 * 1024     -> "${bytes / 1024} KB"
     else                    -> "${bytes / (1024 * 1024)} MB"
-}
-
-// ── Collapsible instructions card ────────────────────────────────────────────
-
-@Composable
-fun AddPrinterInstructionsCard(addresses: List<PrinterAddress>, port: String, epub: Boolean) {
-    var expanded by remember { mutableStateOf(false) }
-    // Which network the steps are written for; defaults to the first (Wi-Fi when present)
-    var selectedLabel by remember { mutableStateOf<String?>(null) }
-    val selected = addresses.firstOrNull { it.label == selectedLabel } ?: addresses.firstOrNull()
-    val ip = selected?.ip ?: "<device IP>"
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { expanded = !expanded }
-                    .padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "How to add this printer",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(if (expanded) "▲" else "▼", color = Color.Gray, fontSize = 12.sp)
-            }
-
-            AnimatedVisibility(visible = expanded) {
-                Column(
-                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        "Auto-discovery only works on the same WiFi. Over Tailscale / VPN, use the manual steps with this device's VPN IP. " +
-                        "Always choose the driverless option (AirPrint, IPP Everywhere, IPP Class Driver) — InkPrint only accepts PDF.",
-                        fontSize = 12.sp, color = Color.Gray
-                    )
-                    if (epub) {
-                        Text(
-                            "There are two printers: \"InkPrint\" saves a PDF, \"InkPrint EPUB\" saves a reflowable e-book. " +
-                            "Add one or both — each step below says how to add the EPUB printer too.",
-                            fontSize = 12.sp, color = Color.Gray
-                        )
-                    }
-                    if (addresses.size > 1) {
-                        Text("Show the steps for:", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            addresses.forEach { addr ->
-                                FilterChip(
-                                    selected = addr == selected,
-                                    onClick = { selectedLabel = addr.label },
-                                    label = { Text("${addr.label}  ${addr.ip}", fontSize = 12.sp) }
-                                )
-                            }
-                        }
-                    }
-                    OsSection("macOS")   { MacOsInstructions(ip, port, epub) }
-                    OsSection("Windows") { WindowsInstructions(ip, port, epub) }
-                    OsSection("Linux")   { LinuxInstructions(ip, port, epub) }
-                    OsSection("iOS / iPadOS") { IosInstructions(epub) }
-                    OsSection("Android") { AndroidInstructions(ip, port, epub) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun OsSection(title: String, content: @Composable () -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Column {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(6.dp))
-                .background(Color(0xFFF3F4F6))
-                .clickable { open = !open }
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                title,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
-                modifier = Modifier.weight(1f)
-            )
-            Text(if (open) "▲" else "▼", color = Color.Gray, fontSize = 11.sp)
-        }
-        AnimatedVisibility(visible = open) {
-            Column(modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)) {
-                content()
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-    }
-}
-
-// ── OS instruction panels ────────────────────────────────────────────────────
-
-@Composable
-fun MacOsInstructions(ip: String, port: String, epub: Boolean) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-
-        InfoBadge("✅ Recommended — Auto-discovery (AirPrint)")
-        Text(
-            "Make sure InkPrint service is running and your Mac is on the same WiFi network.",
-            fontSize = 12.sp, color = Color.Gray
-        )
-        Step(1, "Apple menu → System Settings → Printers & Scanners")
-        Step(2, "Click Add Printer, Scanner or Fax…")
-        Step(3, if (epub) "InkPrint and InkPrint EPUB appear in the list — select one" else "InkPrint appears in the list — select it")
-        Step(4, "Use: AirPrint is selected automatically → click Add")
-        if (epub) Step(5, "To add the other printer too, repeat steps 2–4")
-
-        HorizontalDivider()
-
-        InfoBadge("🖥️ Manual — Terminal (by IP, e.g. over Tailscale/VPN)")
-        CodeBlock(
-            "lpadmin -p InkPrint -E \\\n" +
-            "  -v ipp://$ip:$port/ipp/print \\\n" +
-            "  -m everywhere" +
-            if (epub) "\n\n# EPUB printer\n" +
-                "lpadmin -p InkPrint-EPUB -E \\\n" +
-                "  -v ipp://$ip:$port/ipp/epub \\\n" +
-                "  -m everywhere" else ""
-        )
-        Text(
-            "Don't add it with \"Generic PostScript Printer\": that sends PostScript, and InkPrint only accepts PDF.",
-            fontSize = 12.sp, color = Color(0xFFBF360C)
-        )
-    }
-}
-
-@Composable
-fun WindowsInstructions(ip: String, port: String, epub: Boolean) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-
-        InfoBadge("✅ Automatic")
-        Step(1, "Settings → Bluetooth & devices → Printers & scanners")
-        Step(2, if (epub) "Click Add device — InkPrint and InkPrint EPUB appear on the same network"
-                else "Click Add device — InkPrint appears on the same network")
-        Step(3, if (epub) "Click Add device next to the one you want (or both)" else "Click Add device to confirm")
-        Text(
-            "If InkPrint doesn't show up, add it by IP address below.",
-            fontSize = 12.sp, color = Color.Gray
-        )
-
-        HorizontalDivider()
-
-        InfoBadge("🔧 Manual — Add by IP address")
-        Step(1, "Settings → Bluetooth & devices → Printers & scanners")
-        Step(2, "Add device → \"The printer that I want isn't listed\"")
-        Step(3, "Select \"Add a printer using an IP address or hostname\"")
-        Step(4, "Protocol: IPP  /  Hostname or IP address:")
-        CodeBlock("$ip")
-        Step(5, "Port number: $port  /  Queue: ipp/print" + if (epub) "  (EPUB printer: ipp/epub)" else "")
-        Step(6, "Driver: Microsoft IPP Class Driver — then click Next to finish")
-        if (epub) Step(7, "For the EPUB printer, repeat with Queue: ipp/epub and name it InkPrint EPUB")
-        Text(
-            "Don't pick Generic / Text Only or a PostScript driver: they don't send PDF, and the job is rejected.",
-            fontSize = 12.sp, color = Color(0xFFBF360C)
-        )
-    }
-}
-
-@Composable
-fun LinuxInstructions(ip: String, port: String, epub: Boolean) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-
-        InfoBadge("✅ CUPS — IPP Everywhere (recommended)")
-        Text("Works on Ubuntu, Debian, Fedora, Arch, and most distros.", fontSize = 12.sp, color = Color.Gray)
-        CodeBlock(
-            "# Add printer (driverless IPP Everywhere)\n" +
-            "sudo lpadmin -p InkPrint -E \\\n" +
-            "  -v ipp://$ip:$port/ipp/print \\\n" +
-            "  -m everywhere\n\n" +
-            (if (epub) "# EPUB printer\n" +
-                "sudo lpadmin -p InkPrint-EPUB -E \\\n" +
-                "  -v ipp://$ip:$port/ipp/epub \\\n" +
-                "  -m everywhere\n\n" else "") +
-            "# Set as default (optional)\n" +
-            "sudo lpoptions -d InkPrint\n\n" +
-            "# Print a file\n" +
-            "lp -d InkPrint /path/to/document.pdf"
-        )
-
-        HorizontalDivider()
-
-        InfoBadge("🖥️ GNOME / KDE GUI")
-        Step(1, "Settings → Printers → Add a Printer")
-        Step(2, "Enter the IPP address manually:")
-        CodeBlock("ipp://$ip:$port/ipp/print")
-        if (epub) {
-            Text("EPUB printer:", fontSize = 12.sp, color = Color.Gray)
-            CodeBlock("ipp://$ip:$port/ipp/epub")
-        }
-        Step(3, "Driver: IPP Everywhere (driverless) → Apply")
-        Text(
-            "Don't pick a Generic, PostScript or vendor driver: those don't send PDF.",
-            fontSize = 12.sp, color = Color(0xFFBF360C)
-        )
-    }
-}
-
-@Composable
-fun IosInstructions(epub: Boolean) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-
-        InfoBadge("✅ AirPrint — Zero configuration")
-        Text(
-            "iPhone and iPad support AirPrint natively. No app or setup needed.",
-            fontSize = 12.sp, color = Color.Gray
-        )
-        Step(1, "Start InkPrint service on your BOOX device")
-        Step(2, "Connect your iPhone/iPad to the same WiFi network")
-        Step(3, "Open any app (Safari, Files, Mail, Photos…)")
-        Step(4, "Tap the Share button  →  Print")
-        Step(5, if (epub) "Tap Select Printer — InkPrint and InkPrint EPUB appear automatically"
-                else "Tap Select Printer — InkPrint appears automatically")
-        Step(6, if (epub) "Tap Print — InkPrint saves a PDF on the BOOX, InkPrint EPUB an e-book"
-                else "Tap Print — the file is saved on the BOOX as PDF")
-
-        HorizontalDivider()
-
-        InfoBadge("⚠️ Hotspot limitation")
-        Text(
-            "If your iPhone is sharing a Personal Hotspot, the BOOX device connected to it cannot be discovered via AirPrint. Use a shared WiFi router instead.",
-            fontSize = 12.sp, color = Color(0xFFBF360C)
-        )
-    }
-}
-
-@Composable
-fun AndroidInstructions(ip: String, port: String, epub: Boolean) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-
-        InfoBadge("✅ Built-in Android Print Service")
-        Text("Android 8+ includes an IPP-capable print service.", fontSize = 12.sp, color = Color.Gray)
-        Step(1, "Start InkPrint service on BOOX and connect to the same WiFi")
-        Step(2, "Settings → Connected devices → Connection preferences → Printing")
-        Step(3, "Tap Default Print Service → Enable it")
-        Step(4, if (epub) "InkPrint and InkPrint EPUB should appear automatically" else "InkPrint should appear automatically")
-        Step(5, if (epub) "In any app, open Share / Print menu → select InkPrint or InkPrint EPUB"
-                else "In any app, open Share / Print menu → select InkPrint")
-
-        HorizontalDivider()
-
-        InfoBadge("🖨️ Manual — Add by IP address")
-        Text("If auto-discovery doesn't find InkPrint:", fontSize = 12.sp, color = Color.Gray)
-        Step(1, "In Default Print Service, tap ⋮ → Add printer")
-        Step(2, "Add printer by IP address, and enter (with the port):")
-        CodeBlock("$ip:$port")
-        if (epub) {
-            Text(
-                "Adding by IP only reaches the PDF printer — Android can't take a printer path. Use auto-discovery for InkPrint EPUB.",
-                fontSize = 12.sp, color = Color.Gray
-            )
-        }
-    }
-}
-
-// ── Shared UI helpers ─────────────────────────────────────────────────────────
-
-@Composable
-fun InfoBadge(text: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color(0xFFE8F0FE))
-            .padding(horizontal = 10.dp, vertical = 6.dp)
-    ) {
-        Text(text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF1565C0))
-    }
-}
-
-@Composable
-fun CopyableText(text: String) {
-    val clipboard = LocalClipboardManager.current
-    var copied by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color(0xFFF3F4F6))
-            .clickable { clipboard.setText(AnnotatedString(text)); copied = true }
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            color = Color(0xFF1565C0),
-            modifier = Modifier.weight(1f)
-        )
-        Text(if (copied) "Copied!" else "Copy", fontSize = 11.sp, color = Color.Gray)
-    }
-}
-
-@Composable
-fun Step(number: Int, text: String) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        Box(
-            modifier = Modifier
-                .size(22.dp)
-                .clip(RoundedCornerShape(11.dp))
-                .background(Color(0xFF1565C0)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(number.toString(), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        }
-        Spacer(Modifier.width(8.dp))
-        Text(text, fontSize = 13.sp, modifier = Modifier.weight(1f))
-    }
-}
-
-@Composable
-fun CodeBlock(text: String) {
-    val clipboard = LocalClipboardManager.current
-    var copied by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color(0xFF1E1E1E))
-            .clickable { clipboard.setText(AnnotatedString(text)); copied = true }
-            .padding(10.dp)
-    ) {
-        Column {
-            Text(text, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color(0xFFD4D4D4))
-            Spacer(Modifier.height(4.dp))
-            Text(if (copied) "Copied!" else "Tap to copy", fontSize = 10.sp, color = Color(0xFF888888))
-        }
-    }
 }
