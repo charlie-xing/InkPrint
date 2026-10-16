@@ -47,7 +47,7 @@ android {
         applicationId = "com.inkprint.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
+        versionCode = 16
         versionName = "0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -89,7 +89,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -111,6 +112,8 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // Desktop builds of libjnidispatch bundled in the JNA JAR
+            excludes += "/com/sun/jna/*/*jnidispatch*"
         }
         // The AAR's Java bindings are unused: the Rust core dlopens
         // libonnxruntime.so itself.
@@ -140,7 +143,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("net.java.dev.jna:jna:5.19.1@aar")
+    // The full flavor takes the plain JAR and ships its own libjnidispatch.so,
+    // rebuilt with the current NDK (make fetch-native-deps): Play rejects the
+    // AAR's copy as built with an old NDK. F-Droid keeps the AAR.
+    "fullImplementation"("net.java.dev.jna:jna:5.19.1")
+    "fdroidImplementation"("net.java.dev.jna:jna:5.19.1@aar")
     // Pulled in by Compose; pinned for its 16 KB-page-aligned native library
     // (the version in the Compose BOM above isn't). Google Play requires 16 KB
     // page support for apps targeting Android 15+.

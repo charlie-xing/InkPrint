@@ -17,6 +17,8 @@ ORT_VERSION = 1.30.0
 ORT_MAC_SHA256 = 6ebb5062a934537c352937821f9fe9718e7de1a2db1122a93dd363ffd53a7012
 NATIVE = $(shell pwd)/native
 PDFIUM_ANDROID = $(ANDROID_DIR)/app/src/full/jniLibs/arm64-v8a/libpdfium.so
+# JNA's libjnidispatch.so rebuilt with the local NDK (Play flags the AAR's copy)
+JNIDISPATCH_ANDROID = $(ANDROID_DIR)/app/src/full/jniLibs/arm64-v8a/libjnidispatch.so
 PDFIUM_MAC = $(NATIVE)/pdfium-mac/lib/libpdfium.dylib
 ORT_MAC = $(NATIVE)/onnxruntime-osx-arm64-$(ORT_VERSION)/lib/libonnxruntime.dylib
 MODELS = $(shell pwd)/$(ANDROID_DIR)/app/src/full/assets/models
@@ -49,7 +51,7 @@ uniffi-bindings:
 		--language kotlin \
 		--out-dir $(ANDROID_DIR)/app/src/main/kotlin/com/inkprint/uniffi
 
-fetch-native-deps: $(PDFIUM_ANDROID)
+fetch-native-deps: $(PDFIUM_ANDROID) $(JNIDISPATCH_ANDROID)
 
 fetch-host-deps: $(PDFIUM_MAC) $(ORT_MAC)
 
@@ -59,6 +61,9 @@ $(PDFIUM_ANDROID):
 	echo "$(PDFIUM_ANDROID_SHA256)  $(NATIVE)/dl/pdfium-android-arm64.tgz" | shasum -a 256 -c -
 	tar -xzf $(NATIVE)/dl/pdfium-android-arm64.tgz -C $(NATIVE)/pdfium-android
 	cp $(NATIVE)/pdfium-android/lib/libpdfium.so $@
+
+$(JNIDISPATCH_ANDROID):
+	ANDROID_NDK_HOME=$(NDK_HOME) JAVA_HOME=$(JAVA_HOME) scripts/build-jnidispatch.sh $(NATIVE)/jnidispatch $@
 
 $(PDFIUM_MAC):
 	mkdir -p $(NATIVE)/dl $(NATIVE)/pdfium-mac
