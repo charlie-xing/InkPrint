@@ -237,6 +237,7 @@ class MainActivity : ComponentActivity() {
     private fun PrinterTab(running: Boolean, addresses: List<PrinterAddress>, port: Int, epubPrinter: Boolean) {
         val status by ConversionQueue.status.collectAsState()
         val onWifi = addresses.any { it.label == "Wi-Fi" || it.label == "Ethernet" }
+        val identity = remember { Settings.identity(this) }
         TabPage {
             Text("InkPrint", fontSize = 30.sp, fontWeight = FontWeight.Bold)
 
@@ -280,10 +281,10 @@ class MainActivity : ComponentActivity() {
                 addresses.forEach { addr ->
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(addr.label, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        Text(stringResource(R.string.pdf_printer), fontSize = 14.sp)
+                        Text("${stringResource(R.string.pdf_printer)} · ${identity.pdfName}", fontSize = 14.sp)
                         CopyableText(addr.printerUrl(port))
                         if (epubPrinter) {
-                            Text(stringResource(R.string.epub_printer), fontSize = 14.sp)
+                            Text("${stringResource(R.string.epub_printer)} · ${identity.epubName}", fontSize = 14.sp)
                             CopyableText(addr.epubPrinterUrl(port))
                         }
                         if (addr.label == "VPN") {

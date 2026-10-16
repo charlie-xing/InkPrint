@@ -161,8 +161,9 @@ impl HttpServer {
                     tracing::debug!("Connection from {}", peer_addr);
                     // The address the client connected to — Wi-Fi, Tailscale, ... —
                     // used for the printer URI when the request has no usable Host.
+                    // IPv4 clients on the dual-stack socket show up as ::ffff:a.b.c.d.
                     let local_addr = match stream.local_addr() {
-                        Ok(a) => a,
+                        Ok(a) => SocketAddr::new(a.ip().to_canonical(), a.port()),
                         Err(e) => {
                             tracing::error!("No local address for {}: {}", peer_addr, e);
                             continue;

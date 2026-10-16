@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -6,15 +6,15 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
 use crate::ipp::operations::PrintJobCallback;
-use crate::ipp::printer::PrinterState;
+use crate::ipp::printer::{PrinterIdentity, PrinterState};
 use crate::mdns::advertiser::MdnsAdvertiser;
 use super::http::HttpServer;
 
 pub struct ServerConfig {
     pub port: u16,
     pub storage_dir: PathBuf,
-    pub printer_name: String,
-    /// Also serve (and advertise) the "<name> EPUB" printer on /ipp/epub.
+    pub identity: PrinterIdentity,
+    /// Also serve (and advertise) the EPUB printer on /ipp/epub.
     pub epub_enabled: bool,
     pub callback: Option<Arc<dyn PrintJobCallback>>,
 }
@@ -66,15 +66,22 @@ pub async fn start(config: ServerConfig) -> Result<ServerHandle, Box<dyn std::er
     std::fs::create_dir_all(&config.storage_dir)?;
 
     let printer = Arc::new(PrinterState::new(
-        &config.printer_name,
+        &config.identity,
         config.epub_enabled,
         config.storage_dir,
     ));
 
-    // Bind the TCP listener HERE so bind errors are caught before returning Ok
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
-    let listener = TcpListener::bind(addr).await
-        .map_err(|e| format!("Failed to bind port {}: {} (try port > 1024)", config.port, e))?;
+    // Bind the TCP listener HERE so bind errors are caught before returning Ok.
+    // Dual-stack [::] takes IPv6 clients as well (some Wi-Fi networks only pass
+    // our mDNS over IPv6, so clients reach us by a link-local address); plain
+    // IPv4 where the device has no IPv6.
+    let v6 = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), config.port);
+    let v4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
+    let (listener, addr) = match TcpListener::bind(v6).await {
+        Ok(l) => (l, v6),
+        Err(_) => (TcpListener::bind(v4).await
+            .map_err(|e| format!("Failed to bind port {}: {} (try port > 1024)", config.port, e))?, v4),
+    };
 
     tracing::info!("IPP HTTP server bound to {}", addr);
 
@@ -87,7 +94,10 @@ pub async fn start(config: ServerConfig) -> Result<ServerHandle, Box<dyn std::er
     // This is handled in Rust (not Android NsdManager) so that subtype PTR records are
     // correct on all Android versions — NsdManager on API < 33 does not create proper
     // subtype PTR structure needed for macOS AirPrint auto-discovery.
-    let mdns = MdnsAdvertiser::new(printer.profiles.clone(), &config.printer_name, local_ip, config.port);
+    let mut mdns_addrs = vec![IpAddr::V4(local_ip)];
+    mdns_addrs.extend(ipv6_beside(local_ip).into_iter().map(IpAddr::V6));
+    tracing::info!("mDNS addresses: {:?}", mdns_addrs);
+    let mdns = MdnsAdvertiser::new(printer.profiles.clone(), &config.identity.host_name, mdns_addrs, config.port);
     tokio::spawn(async move {
         if let Err(e) = mdns.start(mdns_rx).await {
             tracing::error!("mDNS error: {}", e);
@@ -107,4 +117,22 @@ pub async fn start(config: ServerConfig) -> Result<ServerHandle, Box<dyn std::er
         local_ip,
         port: config.port,
     })
+}
+
+/// The IPv6 addresses on the interface that carries `v4`. mdns-sd answers on
+/// each interface only with that interface's addresses, so without these the
+/// printer is never announced over IPv6 — and some Wi-Fi networks drop IPv4
+/// multicast between clients while passing IPv6.
+fn ipv6_beside(v4: Ipv4Addr) -> Vec<Ipv6Addr> {
+    let ifs = if_addrs::get_if_addrs().unwrap_or_default();
+    let Some(name) = ifs.iter().find(|a| a.ip() == IpAddr::V4(v4)).map(|a| a.name.clone()) else {
+        return Vec::new();
+    };
+    ifs.into_iter()
+        .filter(|a| a.name == name)
+        .filter_map(|a| match a.ip() {
+            IpAddr::V6(v6) if !v6.is_loopback() => Some(v6),
+            _ => None,
+        })
+        .collect()
 }

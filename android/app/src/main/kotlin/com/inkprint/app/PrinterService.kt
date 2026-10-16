@@ -104,7 +104,7 @@ class PrinterService : Service() {
             startServer(
                 port = DEFAULT_PORT,
                 storagePath = storageDir.absolutePath,
-                printerName = "InkPrint",
+                identity = Settings.identity(this),
                 epubEnabled = Settings.epubPrinter(this),
                 listener = printJobListener
             )
@@ -131,12 +131,12 @@ class PrinterService : Service() {
     private fun registerMdns(ip: String) {
         val nsd = getSystemService(NSD_SERVICE) as NsdManager
         nsdManager = nsd
-        // One service per printer; keep names, paths and UUIDs in sync with
-        // PrinterProfile in the core (which advertises the same set itself).
+        // One service per printer, the same set the core advertises itself.
+        val id = Settings.identity(this)
         val printers = buildList {
-            add(Triple("InkPrint", "ipp/print", "a7d4b3e2-1c5f-4d8a-9e0b-2f6c8d3a1b4e"))
+            add(Triple(id.pdfName, "ipp/print", id.pdfUuid))
             if (Settings.epubPrinter(this@PrinterService)) {
-                add(Triple("InkPrint EPUB", "ipp/epub", "5c1e9f30-8b7d-4a26-b3e4-6d0f2a9c7e15"))
+                add(Triple(id.epubName, "ipp/epub", id.epubUuid))
             }
         }
         for ((name, resource, uuid) in printers) {

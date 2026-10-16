@@ -57,7 +57,7 @@ async fn test_print_job_end_to_end() {
     let config = inkprint_core::server::listener::ServerConfig {
         port,
         storage_dir: dir.path().to_path_buf(),
-        printer_name: "TestPrinter".to_string(),
+        identity: inkprint_core::PrinterIdentity::fixed("TestPrinter"),
         epub_enabled: true,
         callback: None,
     };
@@ -120,7 +120,7 @@ async fn test_get_printer_attributes_http() {
     let config = inkprint_core::server::listener::ServerConfig {
         port,
         storage_dir: dir.path().to_path_buf(),
-        printer_name: "TestPrinter2".to_string(),
+        identity: inkprint_core::PrinterIdentity::fixed("TestPrinter2"),
         epub_enabled: true,
         callback: None,
     };
@@ -199,7 +199,7 @@ async fn test_epub_printer_path() {
         let config = inkprint_core::server::listener::ServerConfig {
             port,
             storage_dir: dir.path().to_path_buf(),
-            printer_name: "Ink".to_string(),
+            identity: inkprint_core::PrinterIdentity::fixed("Ink"),
             epub_enabled: enabled,
             callback: None,
         };

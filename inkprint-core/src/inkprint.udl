@@ -1,5 +1,5 @@
 namespace inkprint {
-    boolean start_server(u16 port, string storage_path, string printer_name, boolean epub_enabled, PrintJobListener? listener);
+    boolean start_server(u16 port, string storage_path, PrinterIdentity identity, boolean epub_enabled, PrintJobListener? listener);
     boolean stop_server();
     string get_version();
     string get_local_ip();
@@ -15,6 +15,15 @@ namespace inkprint {
     void cancel_conversion();
     // Frees the layout/OCR models until the next conversion.
     void release_models();
+};
+
+// Names, UUIDs and mDNS host this device advertises; unique per install.
+dictionary PrinterIdentity {
+    string pdf_name;
+    string epub_name;
+    string pdf_uuid;
+    string epub_uuid;
+    string host_name;
 };
 
 dictionary ConversionOptions {

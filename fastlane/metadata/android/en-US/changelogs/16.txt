@@ -1,0 +1,4 @@
+- New "InkPrint EPUB" printer: get a reflowable e-book instead of a PDF, made on the device with OCR for scans (not in the F-Droid build)
+- "Searchable scans": scanned PDFs get an invisible, searchable text layer
+- Black-and-white e-ink interface in English, Simplified and Traditional Chinese
+- Printers are named per device, e.g. "InkPrint [3F2A]", so readers on one network no longer hide each other; re-add printers added by name

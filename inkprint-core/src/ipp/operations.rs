@@ -831,7 +831,7 @@ mod tests {
     }
 
     fn make_printer(dir: &std::path::Path) -> Arc<PrinterState> {
-        Arc::new(PrinterState::new("InkPrint", true, dir.to_path_buf()))
+        Arc::new(PrinterState::new(&crate::ipp::printer::PrinterIdentity::fixed("InkPrint"), true, dir.to_path_buf()))
     }
 
     fn build_request(op: u16, request_id: u32, op_attrs: Vec<(u8, &str, &[u8])>, doc_data: &[u8]) -> Vec<u8> {

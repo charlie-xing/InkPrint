@@ -829,7 +829,7 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_inkprint_core_fn_func_release_models(uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    fun uniffi_inkprint_core_fn_func_start_server(`port`: Short,`storagePath`: RustBuffer.ByValue,`printerName`: RustBuffer.ByValue,`epubEnabled`: Byte,`listener`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_inkprint_core_fn_func_start_server(`port`: Short,`storagePath`: RustBuffer.ByValue,`identity`: RustBuffer.ByValue,`epubEnabled`: Byte,`listener`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     fun uniffi_inkprint_core_fn_func_stop_server(uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
@@ -1005,7 +1005,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_inkprint_core_checksum_func_release_models() != 27576.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_inkprint_core_checksum_func_start_server() != 39951.toShort()) {
+    if (lib.uniffi_inkprint_core_checksum_func_start_server() != 20180.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_inkprint_core_checksum_func_stop_server() != 9356.toShort()) {
@@ -1940,6 +1940,50 @@ public object FfiConverterTypeConversionStats: FfiConverterRustBuffer<Conversion
 
 
 
+data class PrinterIdentity (
+    var `pdfName`: kotlin.String, 
+    var `epubName`: kotlin.String, 
+    var `pdfUuid`: kotlin.String, 
+    var `epubUuid`: kotlin.String, 
+    var `hostName`: kotlin.String
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePrinterIdentity: FfiConverterRustBuffer<PrinterIdentity> {
+    override fun read(buf: ByteBuffer): PrinterIdentity {
+        return PrinterIdentity(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PrinterIdentity) = (
+            FfiConverterString.allocationSize(value.`pdfName`) +
+            FfiConverterString.allocationSize(value.`epubName`) +
+            FfiConverterString.allocationSize(value.`pdfUuid`) +
+            FfiConverterString.allocationSize(value.`epubUuid`) +
+            FfiConverterString.allocationSize(value.`hostName`)
+    )
+
+    override fun write(value: PrinterIdentity, buf: ByteBuffer) {
+            FfiConverterString.write(value.`pdfName`, buf)
+            FfiConverterString.write(value.`epubName`, buf)
+            FfiConverterString.write(value.`pdfUuid`, buf)
+            FfiConverterString.write(value.`epubUuid`, buf)
+            FfiConverterString.write(value.`hostName`, buf)
+    }
+}
+
+
+
 data class SearchableStats (
     var `pages`: kotlin.UInt, 
     var `ocrPages`: kotlin.UInt
@@ -2206,11 +2250,11 @@ public object FfiConverterOptionalTypePrintJobListener: FfiConverterRustBuffer<P
 }
     
     
- fun `startServer`(`port`: kotlin.UShort, `storagePath`: kotlin.String, `printerName`: kotlin.String, `epubEnabled`: kotlin.Boolean, `listener`: PrintJobListener?): kotlin.Boolean {
+ fun `startServer`(`port`: kotlin.UShort, `storagePath`: kotlin.String, `identity`: PrinterIdentity, `epubEnabled`: kotlin.Boolean, `listener`: PrintJobListener?): kotlin.Boolean {
             return FfiConverterBoolean.lift(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_inkprint_core_fn_func_start_server(
-        FfiConverterUShort.lower(`port`),FfiConverterString.lower(`storagePath`),FfiConverterString.lower(`printerName`),FfiConverterBoolean.lower(`epubEnabled`),FfiConverterOptionalTypePrintJobListener.lower(`listener`),_status)
+        FfiConverterUShort.lower(`port`),FfiConverterString.lower(`storagePath`),FfiConverterTypePrinterIdentity.lower(`identity`),FfiConverterBoolean.lower(`epubEnabled`),FfiConverterOptionalTypePrintJobListener.lower(`listener`),_status)
 }
     )
     }

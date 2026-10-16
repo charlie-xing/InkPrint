@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use tokio::sync::oneshot;
 
@@ -8,16 +8,17 @@ use crate::ipp::printer::PrinterProfile;
 pub struct MdnsAdvertiser {
     profiles: Vec<PrinterProfile>,
     host_name: String,
-    ip: Ipv4Addr,
+    /// The LAN IPv4 address first, then that interface's IPv6 addresses.
+    addrs: Vec<IpAddr>,
     port: u16,
 }
 
 impl MdnsAdvertiser {
     /// Advertises every profile (PDF printer, EPUB printer) as its own IPP
     /// service on one shared host record.
-    pub fn new(profiles: Vec<PrinterProfile>, base_name: &str, ip: Ipv4Addr, port: u16) -> Self {
-        let host_name = format!("{}.local.", base_name.to_lowercase().replace(' ', "-"));
-        Self { profiles, host_name, ip, port }
+    pub fn new(profiles: Vec<PrinterProfile>, host_name: &str, addrs: Vec<IpAddr>, port: u16) -> Self {
+        let host_name = format!("{}.local.", host_name);
+        Self { profiles, host_name, addrs, port }
     }
 
     fn register(&self, daemon: &ServiceDaemon, profile: &PrinterProfile)
@@ -27,7 +28,7 @@ impl MdnsAdvertiser {
         //   base type:  _ipp._tcp.local.         → found by all IPP clients
         //   subtype:    _universal._sub._ipp._tcp.local. → macOS selects "AirPrint" automatically
         let service_type = "_universal._sub._ipp._tcp.local.";
-        let ip_str = self.ip.to_string();
+        let ip_str = self.addrs[0].to_string();
 
         let mut props = HashMap::new();
         props.insert("txtvers".to_string(), "1".to_string());
@@ -36,7 +37,7 @@ impl MdnsAdvertiser {
         props.insert("rp".to_string(),       profile.resource.to_string());
         props.insert("ty".to_string(),       profile.make_and_model.to_string());
         props.insert("adminurl".to_string(), format!("http://{}:{}/", ip_str, self.port));
-        props.insert("UUID".to_string(),     profile.uuid.to_string());
+        props.insert("UUID".to_string(),     profile.uuid.clone());
         props.insert("Color".to_string(),    "F".to_string());
         props.insert("Duplex".to_string(),   "F".to_string());
         props.insert("Fax".to_string(),      "F".to_string());
@@ -50,7 +51,7 @@ impl MdnsAdvertiser {
             service_type,
             &profile.name,
             &self.host_name,
-            ip_str.as_str(),
+            self.addrs.as_slice(),
             self.port,
             Some(props),
         )?;
@@ -70,7 +71,7 @@ impl MdnsAdvertiser {
 
         for p in &self.profiles {
             self.register(&daemon, p)?;
-            log::info!("mDNS: registered '{}' on {}:{}/{}", p.name, self.ip, self.port, p.resource);
+            log::info!("mDNS: registered '{}' on {}:{}/{}", p.name, self.addrs[0], self.port, p.resource);
         }
 
         // Re-announce every 60 s so remote caches never expire between queries.
