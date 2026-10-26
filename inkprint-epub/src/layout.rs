@@ -216,29 +216,145 @@ pub fn split_at_gutters(lines: Vec<Line>) -> Vec<Line> {
     out
 }
 
-/// On scanned pages the model often takes a photo with text set over it —
-/// a title, a caption, even a whole column — for one picture. Lines of real
+/// The model often takes columns of body text together with the photo
+/// below them for one picture, or for a table. A stretch of such running
+/// text goes back to the page's text, and the picture shrinks to the part
+/// above or below it.
+///
+/// On `scanned` pages (text from OCR) the model also takes a photo with
+/// text set over it — a title, a caption — for one picture. Lines of real
 /// text inside a figure are taken out and rebuilt as text blocks; the
 /// picture stays. In a figure covering half the page or more (the page's
 /// background, in effect) that is every line; in a smaller one, lines of at
 /// least 12 letters, digits or CJK characters (labels in a diagram are
 /// shorter).
-pub fn text_out_of_figures(mut regions: Vec<Region>, page: &Rect) -> Vec<Region> {
+pub fn text_out_of_figures(mut regions: Vec<Region>, page: &Rect, scanned: bool) -> Vec<Region> {
+    for r in regions.iter_mut().filter(|r| r.kind == Kind::Table) {
+        let long: Vec<Line> = r.lines.iter().filter(|l| letters(&l.text) >= 12).cloned().collect();
+        if running_text(long).0.len() >= 10 {
+            tracing::debug!("table {:?} is running text", r.rect);
+            r.kind = Kind::Figure;
+        }
+    }
     let (mut body, mut captions) = (Vec::new(), Vec::new());
     for r in regions.iter_mut().filter(|r| r.kind == Kind::Figure) {
         let background = r.rect.area() >= 0.5 * page.area();
         let min_chars = if background { 2 } else { 12 };
         let (text, keep): (Vec<Line>, Vec<Line>) = std::mem::take(&mut r.lines)
             .into_iter()
-            .partition(|l| l.text.chars().filter(|c| c.is_alphanumeric()).count() >= min_chars);
+            .partition(|l| letters(&l.text) >= min_chars);
         r.lines = keep;
+        let (mut running, text) = running_text(text);
+        if let Some(t) = running.iter().map(|l| l.rect).reduce(|a, b| a.union(&b)) {
+            // Short last lines of its paragraphs belong to it too.
+            let (more, keep): (Vec<Line>, Vec<Line>) =
+                std::mem::take(&mut r.lines).into_iter().partition(|l| l.rect.covered_by(&t) > 0.8);
+            running.extend(more);
+            r.lines = keep;
+            // The picture is what's left clear of the text.
+            let blocked: Vec<Rect> = running.iter().map(|l| l.rect.padded(FIGURE_PAD + 4.0, page)).collect();
+            r.rect = largest_clear_rect(&r.rect, &blocked).unwrap_or(Rect::new(r.rect.x0, r.rect.y0, r.rect.x0, r.rect.y0));
+            body.extend(running);
+        }
         // Text over a page-sized picture is the page's own text; over a
         // smaller picture it is that picture's caption.
-        if background { body.extend(text) } else { captions.extend(text) }
+        if !scanned {
+            r.lines.extend(text);
+        } else if background {
+            body.extend(text)
+        } else {
+            captions.extend(text)
+        }
     }
+    // Pictures shrunk to a sliver, or now lying inside another picture
+    // (the model's second guess at the same photo), go.
+    let figures: Vec<Rect> = regions.iter().filter(|r| r.kind == Kind::Figure).map(|r| r.rect).collect();
+    regions.retain(|r| {
+        r.kind != Kind::Figure
+            || (r.rect.h() >= 0.03 * page.h()
+                && !figures.iter().any(|f| f.area() > r.rect.area() && r.rect.covered_by(f) > 0.8))
+    });
     regions.extend(text_blocks(body, page));
     regions.extend(text_blocks(captions, page).into_iter().map(|b| Region { kind: Kind::Caption, ..b }));
     regions
+}
+
+/// The largest rectangle inside `area` that overlaps none of `blocked`,
+/// on a 48×48 grid.
+fn largest_clear_rect(area: &Rect, blocked: &[Rect]) -> Option<Rect> {
+    const N: usize = 48;
+    let (cw, ch) = (area.w() / N as f32, area.h() / N as f32);
+    if cw <= 0.0 || ch <= 0.0 {
+        return None;
+    }
+    let cell = |i: usize, j: usize| {
+        let (x, y) = (area.x0 + i as f32 * cw, area.y0 + j as f32 * ch);
+        Rect::new(x, y, x + cw, y + ch)
+    };
+    // Largest rectangle in a histogram, row by row: heights[i] = free cells
+    // in column i ending at the current row.
+    let mut heights = [0usize; N];
+    let mut best: Option<(usize, Rect)> = None;
+    for j in 0..N {
+        for (i, h) in heights.iter_mut().enumerate() {
+            let c = cell(i, j);
+            *h = if blocked.iter().any(|b| b.intersection_area(&c) > 0.0) { 0 } else { *h + 1 };
+        }
+        for i in 0..N {
+            let h = heights[i];
+            if h == 0 {
+                continue;
+            }
+            let (mut l, mut r) = (i, i);
+            while l > 0 && heights[l - 1] >= h {
+                l -= 1;
+            }
+            while r + 1 < N && heights[r + 1] >= h {
+                r += 1;
+            }
+            let cells = (r - l + 1) * h;
+            if best.is_none_or(|(b, _)| cells > b) {
+                let (a, b) = (cell(l, j + 1 - h), cell(r, j));
+                best = Some((cells, a.union(&b)));
+            }
+        }
+    }
+    best.map(|(_, r)| r)
+}
+
+fn letters(s: &str) -> usize {
+    s.chars().filter(|c| c.is_alphanumeric()).count()
+}
+
+/// Padding added around a picture when it is cropped from the page.
+pub const FIGURE_PAD: f32 = 16.0;
+
+/// Splits off the longest stretch of lines that follow each other down the
+/// page (side-by-side columns count as one stretch) if it is running text —
+/// six lines or more; a caption is a line or three. Returns it and the rest.
+fn running_text(mut lines: Vec<Line>) -> (Vec<Line>, Vec<Line>) {
+    lines.sort_by(|a, b| a.rect.y0.total_cmp(&b.rect.y0));
+    let mut stretches: Vec<(Vec<Line>, f32)> = Vec::new(); // lines, bottom
+    for l in lines {
+        match stretches.last_mut() {
+            Some((s, bottom)) if l.rect.y0 - *bottom < 2.0 * l.rect.h() => {
+                *bottom = bottom.max(l.rect.y1);
+                s.push(l);
+            }
+            _ => {
+                let bottom = l.rect.y1;
+                stretches.push((vec![l], bottom));
+            }
+        }
+    }
+    let longest = stretches.iter().enumerate().max_by_key(|(_, s)| s.0.len()).map(|(i, _)| i);
+    match longest {
+        Some(i) if stretches[i].0.len() >= 6 => {
+            let running = stretches.remove(i).0;
+            (running, stretches.into_iter().flat_map(|s| s.0).collect())
+        }
+        _ => (Vec::new(), stretches.into_iter().flat_map(|s| s.0).collect()),
+    }
 }
 
 /// Text-layer lines plus the OCR lines that don't repeat one of them.

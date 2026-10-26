@@ -29,10 +29,13 @@ p { margin: 0 0 0.6em 0; text-align: justify; }
 body.cjk p.b { text-indent: 2em; }
 p.li { text-indent: 0; margin-left: 1em; }
 p.cap { text-align: center; font-size: 0.9em; text-indent: 0; }
-h1, h2, h3 { text-align: left; page-break-after: avoid; margin: 1em 0 0.6em 0; }
-h1 { font-size: 1.5em; } h2 { font-size: 1.25em; } h3 { font-size: 1.1em; }
+h1, h2, h3, p.h1, p.h2, p.h3 { text-align: left; text-indent: 0; font-weight: bold; page-break-after: avoid; margin: 1em 0 0.6em 0; }
+h1, p.h1 { font-size: 1.5em; } h2, p.h2 { font-size: 1.25em; } h3, p.h3 { font-size: 1.1em; }
 div.fig { text-align: center; margin: 0.8em 0; page-break-inside: avoid; }
-div.fig img { max-width: 100%; height: auto; }
+div.fig img { max-width: 100%; max-height: 70vh; height: auto; }
+div.fig.page { margin: 0; }
+div.fig.page img { max-height: 96vh; }
+.pb { page-break-before: always; break-before: page; }
 ";
 
 fn stored() -> SimpleFileOptions {
@@ -104,10 +107,20 @@ impl<W: Write + Seek> EpubWriter<W> {
 
         for (i, ch) in chapters.iter().enumerate() {
             let mut body = String::new();
+            // The next element starts a new PDF page, on a new screen.
+            let mut page_start = false;
             for b in &ch.blocks {
+                let pb = if std::mem::replace(&mut page_start, false) { " pb" } else { "" };
                 match b {
-                    Out::Heading { level, text, id } => {
+                    Out::PageStart => page_start = !body.is_empty(),
+                    // Readers like ReadEra start every h1–h3 on a new
+                    // screen, whatever the CSS says: only a chapter's
+                    // opening heading is one, the rest look the same.
+                    Out::Heading { level, text, id } if body.is_empty() => {
                         body.push_str(&format!("<h{level} id=\"{id}\">{}</h{level}>\n", escape(text)));
+                    }
+                    Out::Heading { level, text, id } => {
+                        body.push_str(&format!("<p class=\"h{level}{pb}\" id=\"{id}\">{}</p>\n", escape(text)));
                     }
                     Out::Para { text, class } => {
                         let c = match class {
@@ -115,11 +128,12 @@ impl<W: Write + Seek> EpubWriter<W> {
                             ParaClass::ListItem => "li",
                             ParaClass::Caption => "cap",
                         };
-                        body.push_str(&format!("<p class=\"{c}\">{}</p>\n", escape(text)));
+                        body.push_str(&format!("<p class=\"{c}{pb}\">{}</p>\n", escape(text)));
                     }
-                    Out::Figure { href, alt } => {
+                    Out::Figure { href, alt, whole_page } => {
+                        let page = if *whole_page { " page" } else { "" };
                         body.push_str(&format!(
-                            "<div class=\"fig\"><img src=\"{}\" alt=\"{}\"/></div>\n",
+                            "<div class=\"fig{page}{pb}\"><img src=\"{}\" alt=\"{}\"/></div>\n",
                             escape(href),
                             escape(alt)
                         ));
@@ -307,7 +321,7 @@ mod tests {
             blocks: vec![
                 Out::Heading { level: 1, text: "第一章 <开始>".into(), id: "h1".into() },
                 Out::Para { text: "正文 & 内容".into(), class: ParaClass::Body },
-                Out::Figure { href, alt: String::new() },
+                Out::Figure { href, alt: String::new(), whole_page: false },
             ],
         }];
         let toc = vec![(1, "第一章 <开始>".to_string(), 0, "h1".to_string())];

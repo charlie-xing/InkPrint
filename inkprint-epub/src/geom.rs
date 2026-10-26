@@ -79,6 +79,20 @@ impl Rect {
     }
 }
 
+/// Share of `page` covered by the union of `rects`, sampled on a grid.
+pub fn coverage(rects: &[Rect], page: &Rect) -> f32 {
+    const N: usize = 64;
+    let (w, h) = (page.w() / N as f32, page.h() / N as f32);
+    let mut hit = 0;
+    for i in 0..N {
+        for j in 0..N {
+            let (x, y) = (page.x0 + (i as f32 + 0.5) * w, page.y0 + (j as f32 + 0.5) * h);
+            hit += rects.iter().any(|r| x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1) as usize;
+        }
+    }
+    hit as f32 / (N * N) as f32
+}
+
 /// Reading order for boxes on one page: recursive XY-cut. At each level the
 /// boxes are split along whichever axis has the widest empty gap — rows (top
 /// to bottom) or columns (left to right) — so a full-width title is cut off

@@ -64,7 +64,8 @@ fn layout_model_turns_tables_into_pictures() {
     let stats = convert(&fixture("policy-zh.pdf"), &out, &opts, None).unwrap();
     assert!(stats.layout_model);
     let text = chapters(&out);
-    assert!(text.contains("<h2 id="), "section headings found");
+    // Mid-chapter headings are styled paragraphs (see epub.rs).
+    assert!(text.contains("<h2 id=") || text.contains("<p class=\"h2"), "section headings found");
     assert!(text.contains("<img src=\"images/p2-"), "permission table cut out as a picture");
 }
 

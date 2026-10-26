@@ -29,8 +29,9 @@ pub enum Block {
         /// candidate, identified by this key.
         margin_key: Option<String>,
     },
-    /// A picture already stored in the book under `href`.
-    Figure { href: String, alt: String },
+    /// A picture already stored in the book under `href`. `whole_page`:
+    /// the whole PDF page as one picture, sized to fill a screen.
+    Figure { href: String, alt: String, whole_page: bool },
 }
 
 impl Block {
@@ -44,7 +45,10 @@ impl Block {
 pub enum Out {
     Heading { level: u8, text: String, id: String },
     Para { text: String, class: ParaClass },
-    Figure { href: String, alt: String },
+    Figure { href: String, alt: String, whole_page: bool },
+    /// The next PDF page starts here: a new screen in the reader, so each
+    /// page of the PDF takes one or two screens rather than running on.
+    PageStart,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +99,10 @@ pub fn assemble(mut pages: Vec<Vec<Block>>, promote_headings: bool, zh: bool) ->
     let mut next_id = 0usize;
 
     let close = |cur: &mut Vec<Out>, title: &mut Option<String>, start: usize, end: usize, chapters: &mut Vec<Chapter>| {
+        // A chapter starts on a new screen anyway.
+        while cur.last() == Some(&Out::PageStart) {
+            cur.pop();
+        }
         if cur.is_empty() {
             return;
         }
@@ -108,12 +116,18 @@ pub fn assemble(mut pages: Vec<Vec<Block>>, promote_headings: bool, zh: bool) ->
             close(&mut cur, &mut cur_title, cur_start, pi - 1, &mut chapters);
             cur_start = pi;
         }
+        if !cur.is_empty() && !page.is_empty() {
+            cur.push(Out::PageStart);
+        }
         for b in page {
             match b {
                 Block::Heading { text, size, doc_title } => {
                     let level = levels(size, doc_title);
                     let starts_chapter = level == 1 || (level == 2 && pi - cur_start >= 10);
-                    if starts_chapter && !cur.is_empty() {
+                    // A title set over several lines ("We are all" /
+                    // "migrants") is one chapter, not one per line.
+                    let has_content = cur.iter().any(|o| !matches!(o, Out::Heading { .. } | Out::PageStart));
+                    if starts_chapter && has_content {
                         close(&mut cur, &mut cur_title, cur_start, pi.saturating_sub(1).max(cur_start), &mut chapters);
                         cur_start = pi;
                     }
@@ -128,7 +142,7 @@ pub fn assemble(mut pages: Vec<Vec<Block>>, promote_headings: bool, zh: bool) ->
                     cur.push(Out::Heading { level, text, id });
                 }
                 Block::Para { text, class, .. } => cur.push(Out::Para { text, class }),
-                Block::Figure { href, alt } => cur.push(Out::Figure { href, alt }),
+                Block::Figure { href, alt, whole_page } => cur.push(Out::Figure { href, alt, whole_page }),
             }
         }
     }
@@ -254,8 +268,10 @@ mod tests {
             .collect();
         let a = assemble(pages, false, false);
         let all: Vec<&Out> = a.chapters.iter().flat_map(|c| &c.blocks).collect();
-        assert_eq!(all.len(), 5);
-        assert!(all.iter().all(|b| matches!(b, Out::Para { text, .. } if text == "text.")));
+        // Each page after the first starts a new screen.
+        assert_eq!(all.len(), 9);
+        assert!(all.iter().step_by(2).all(|b| matches!(b, Out::Para { text, .. } if text == "text.")));
+        assert!(all.iter().skip(1).step_by(2).all(|b| **b == Out::PageStart));
     }
 
     #[test]
@@ -264,9 +280,9 @@ mod tests {
         let a = assemble(pages, false, true);
         let texts: Vec<String> = a.chapters[0].blocks.iter().map(|b| match b {
             Out::Para { text, .. } => text.clone(),
-            _ => String::new(),
+            _ => "|".into(),
         }).collect();
-        assert_eq!(texts, vec!["没有数据统计、没有广告。", "下一段。"]);
+        assert_eq!(texts, vec!["没有数据统计、没有广告。", "|", "下一段。"]);
     }
 
     #[test]
@@ -295,6 +311,15 @@ mod tests {
         ]];
         let a = assemble(pages, true, false);
         assert!(matches!(&a.chapters[0].blocks[0], Out::Heading { level: 1, text, .. } if text == "Introduction"));
+    }
+
+    #[test]
+    fn headings_alone_do_not_make_a_chapter() {
+        let h = |t: &str| Block::Heading { text: t.into(), size: 24.0, doc_title: false };
+        let pages = vec![vec![body("intro.")], vec![h("We are all")], vec![h("migrants"), body("text.")]];
+        let a = assemble(pages, false, false);
+        assert_eq!(a.chapters.len(), 2);
+        assert_eq!(a.chapters[1].title, "We are all");
     }
 
     #[test]

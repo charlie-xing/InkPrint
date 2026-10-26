@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use image::{imageops, DynamicImage, GrayImage, RgbImage};
+use image::{imageops, RgbImage};
 
 use book::{Block, ParaClass};
 use geom::Rect;
@@ -203,7 +203,7 @@ pub fn make_searchable(pdf: &Path, out: &Path, opts: &Options, progress: Option<
         let picture_area: f32 = info.images.iter().map(|r| r.area()).sum();
         let picture_only = info.chars < MIN_TEXT_CHARS && (info.chars == 0 || picture_area > 0.5 * info.bounds.area());
         let bitmap = pdf::render(&page, scale)?;
-        let needs_ocr = picture_only || {
+        let needs_ocr = picture_only || info.garbled || {
             let model = layout_regions(Some(&engine), &bitmap, i);
             model.as_ref().is_some_and(|m| layout::text_layer_has_gaps(m, &info.lines, &info.bounds))
                 || unexplained_ink(&bitmap, &info.lines, &info.images) > UNEXPLAINED_INK
@@ -287,7 +287,7 @@ fn convert_page<W: std::io::Write + std::io::Seek>(
     if cover {
         let w = 600.min(bitmap.width());
         let thumb = imageops::thumbnail(&bitmap, w, bitmap.height() * w / bitmap.width().max(1));
-        writer.set_cover(&jpeg(&DynamicImage::ImageRgb8(thumb).to_luma8())?)?;
+        writer.set_cover(&jpeg(&thumb)?)?;
     }
 
     let Some((regions, used_ocr)) = analyze_page(&info, &bitmap, scale, index, engine, opts) else {
@@ -295,9 +295,21 @@ fn convert_page<W: std::io::Write + std::io::Seek>(
         if is_blank(&bitmap) {
             return Ok(Page { blocks: Vec::new(), ocr: false, full_image: false });
         }
-        let href = writer.add_image(&format!("p{}", index + 1), &jpeg(&fit(DynamicImage::ImageRgb8(bitmap).to_luma8()))?)?;
-        return Ok(Page { blocks: vec![Block::Figure { href, alt: String::new() }], ocr: false, full_image: true });
+        let href = writer.add_image(&format!("p{}", index + 1), &jpeg(&fit(bitmap))?)?;
+        return Ok(Page { blocks: vec![Block::Figure { href, alt: String::new(), whole_page: true }], ocr: false, full_image: true });
     };
+    if is_photo_page(&regions, &info.bounds) || (cover && is_short(&regions)) {
+        // A photo with a few words on it: the page as one picture, its text
+        // where the page puts it, rather than a picture and stray lines on
+        // screens of their own.
+        let alt: String = text::merge_rows(regions.into_iter().flat_map(|r| r.lines).collect())
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let href = writer.add_image(&format!("p{}", index + 1), &jpeg(&fit(bitmap))?)?;
+        return Ok(Page { blocks: vec![Block::Figure { href, alt, whole_page: true }], ocr: used_ocr, full_image: true });
+    }
     let blocks = regions_to_blocks(regions, &bitmap, index, writer)?;
     Ok(Page { blocks, ocr: used_ocr, full_image: false })
 }
@@ -325,7 +337,8 @@ fn analyze_page(
         let mut lines = info.lines.clone();
         // Part of the page may be outlines or a picture the text layer
         // doesn't cover: recognise the page and fill in what's missing.
-        let gaps = model.as_ref().is_some_and(|m| layout::text_layer_has_gaps(m, &lines, &info.bounds))
+        let gaps = info.garbled
+            || model.as_ref().is_some_and(|m| layout::text_layer_has_gaps(m, &lines, &info.bounds))
             || unexplained_ink(bitmap, &lines, &info.images) > UNEXPLAINED_INK;
         if gaps {
             if let Some(ocr) = ocr_lines(engine, opts, bitmap, scale, index) {
@@ -349,7 +362,7 @@ fn analyze_page(
         }
         None => layout::heuristic(lines, &info.images, &info.bounds),
     };
-    let regions = if picture_only { layout::text_out_of_figures(regions, &info.bounds) } else { regions };
+    let regions = layout::text_out_of_figures(regions, &info.bounds, picture_only || used_ocr);
     Some((regions, used_ocr))
 }
 
@@ -412,6 +425,9 @@ fn regions_to_blocks<W: std::io::Write + std::io::Seek>(
     // Bottom edge of the last text region, to spot a paragraph that runs on
     // into the next column.
     let mut last_text_bottom: Option<f32> = None;
+    // Lines in the last text region: a column of body text ends on a line
+    // of running text, however short the paragraph it starts there.
+    let mut last_text_lines = 0;
     for i in order {
         let r = regions[i].take().unwrap();
         match r.kind {
@@ -434,6 +450,7 @@ fn regions_to_blocks<W: std::io::Write + std::io::Seek>(
                 // on into it. (A caption followed by text below it doesn't.)
                 let new_column = last_text_bottom.is_some_and(|b| r.rect.y0 < b - 0.5 * r.rect.h().min(50.0));
                 let bottom = r.rect.y1;
+                let lines = r.lines.len();
                 let mut first = true;
                 for p in text::paragraphs(r.lines) {
                     let runs_on = std::mem::take(&mut first)
@@ -442,7 +459,7 @@ fn regions_to_blocks<W: std::io::Write + std::io::Seek>(
                         && !r.in_margin
                         && !text::is_list_item(&p.text)
                         && matches!(blocks.last(), Some(Block::Para { text, class: ParaClass::Body, margin_key: None, .. })
-                            if text.chars().count() >= 20 && !text::ends_sentence(text));
+                            if (text.chars().count() >= 20 || last_text_lines >= 6) && !text::ends_sentence(text));
                     if runs_on {
                         if let Some(Block::Para { text, .. }) = blocks.last_mut() {
                             *text = text::join_lines(text, &p.text);
@@ -464,10 +481,11 @@ fn regions_to_blocks<W: std::io::Write + std::io::Seek>(
                 }
                 if !r.in_margin {
                     last_text_bottom = Some(bottom);
+                    last_text_lines = lines;
                 }
             }
             Kind::Figure | Kind::Table | Kind::Formula => {
-                let crop = r.rect.padded(16.0, &page_rect);
+                let crop = trim_to_ink(bitmap, &r.rect.padded(layout::FIGURE_PAD, &page_rect));
                 if crop.w() < 24.0 || crop.h() < 24.0 {
                     continue;
                 }
@@ -482,7 +500,7 @@ fn regions_to_blocks<W: std::io::Write + std::io::Seek>(
                 figures += 1;
                 let href = writer.add_image(
                     &format!("p{}-{}", index + 1, figures),
-                    &jpeg(&fit(DynamicImage::ImageRgb8(img).to_luma8()))?,
+                    &jpeg(&fit(img))?,
                 )?;
                 // Text inside a table stays searchable as the picture's alt.
                 let alt: String = text::merge_rows(r.lines)
@@ -493,12 +511,75 @@ fn regions_to_blocks<W: std::io::Write + std::io::Seek>(
                     .chars()
                     .take(300)
                     .collect();
-                blocks.push(Block::Figure { href, alt });
+                blocks.push(Block::Figure { href, alt, whole_page: false });
             }
         }
     }
     Ok(blocks)
 }
+
+/// Shrinks `r` to the ink in it: rows and columns at its edges that are all
+/// the colour of its corners (the page's paper) go, leaving a little margin.
+fn trim_to_ink(bitmap: &RgbImage, r: &Rect) -> Rect {
+    let (x0, y0) = (r.x0.max(0.0) as u32, r.y0.max(0.0) as u32);
+    let (x1, y1) = ((r.x1 as u32).min(bitmap.width()), (r.y1 as u32).min(bitmap.height()));
+    if x1 <= x0 + 2 || y1 <= y0 + 2 {
+        return *r;
+    }
+    let paper = *bitmap.get_pixel(x0, y0);
+    let near = |p: &image::Rgb<u8>| p.0.iter().zip(paper.0).all(|(a, b)| a.abs_diff(b) < 24);
+    // A row or column is blank if (nearly) every sampled pixel is paper.
+    let blank = |pixels: &mut dyn Iterator<Item = (u32, u32)>| {
+        let (mut n, mut ink) = (0, 0);
+        for (x, y) in pixels {
+            n += 1;
+            ink += !near(bitmap.get_pixel(x, y)) as u32;
+        }
+        ink * 100 <= n
+    };
+    let (mut t, mut b, mut l, mut rr) = (y0, y1 - 1, x0, x1 - 1);
+    while t < b && blank(&mut (x0..x1).step_by(2).map(|x| (x, t))) {
+        t += 1;
+    }
+    while b > t && blank(&mut (x0..x1).step_by(2).map(|x| (x, b))) {
+        b -= 1;
+    }
+    while l < rr && blank(&mut (t..=b).step_by(2).map(|y| (l, y))) {
+        l += 1;
+    }
+    while rr > l && blank(&mut (t..=b).step_by(2).map(|y| (rr, y))) {
+        rr -= 1;
+    }
+    let m = 8.0;
+    Rect::new(l as f32 - m, t as f32 - m, rr as f32 + 1.0 + m, b as f32 + 1.0 + m)
+        .padded(0.0, r)
+}
+
+/// Pictures cover most of the page and there is little text beside them:
+/// a photo page, perhaps with a title or a caption, or a chart.
+fn is_photo_page(regions: &[Region], page: &Rect) -> bool {
+    let text: usize = regions
+        .iter()
+        .filter(|r| r.kind != Kind::Furniture && !r.kind.is_picture())
+        .flat_map(|r| &r.lines)
+        .map(|l| l.text.chars().filter(|c| c.is_alphanumeric()).count())
+        .sum();
+    let pictures: Vec<Rect> = regions.iter().filter(|r| r.kind == Kind::Figure).map(|r| r.rect).collect();
+    let covered = geom::coverage(&pictures, page);
+    tracing::debug!("photo page? pictures cover {:.0}%, {text} characters", covered * 100.0);
+    covered >= PHOTO_PAGE_COVER && text <= PHOTO_PAGE_TEXT
+}
+
+/// A first page with this little text (a magazine or book cover) is kept
+/// whole as a picture.
+fn is_short(regions: &[Region]) -> bool {
+    regions.iter().flat_map(|r| &r.lines).map(|l| l.text.chars().filter(|c| c.is_alphanumeric()).count()).sum::<usize>() <= 300
+}
+
+/// Share of the page pictures cover on a photo page, and the most text
+/// (letters, digits, CJK characters) it may carry.
+const PHOTO_PAGE_COVER: f32 = 0.5;
+const PHOTO_PAGE_TEXT: usize = 200;
 
 /// A "title" the layout model found that is really running text: too long
 /// or too many lines for a heading.
@@ -509,7 +590,7 @@ fn looks_like_body(r: &Region) -> bool {
 }
 
 /// Shrinks a picture so its longest side is at most MAX_IMAGE_PX.
-fn fit(img: GrayImage) -> GrayImage {
+fn fit(img: RgbImage) -> RgbImage {
     let (w, h) = img.dimensions();
     let long = w.max(h);
     if long <= MAX_IMAGE_PX {
@@ -519,7 +600,7 @@ fn fit(img: GrayImage) -> GrayImage {
     imageops::resize(&img, nw.max(1), nh.max(1), imageops::FilterType::Triangle)
 }
 
-fn jpeg(img: &GrayImage) -> Result<Vec<u8>, Error> {
+fn jpeg(img: &RgbImage) -> Result<Vec<u8>, Error> {
     let mut buf = Cursor::new(Vec::new());
     let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 80);
     img.write_with_encoder(enc).map_err(|e| Error::Image(e.to_string()))?;

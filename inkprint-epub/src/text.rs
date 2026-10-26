@@ -101,6 +101,13 @@ pub fn is_page_number(s: &str) -> bool {
     if t.len() <= 4 && t.chars().all(|c| c.is_ascii_digit()) {
         return true;
     }
+    // "16." — and "0. 1." where two pages' numbers ran together.
+    if t.split_whitespace().all(|w| {
+        let d = w.strip_suffix('.').unwrap_or(w);
+        !d.is_empty() && d.len() <= 4 && d.chars().all(|c| c.is_ascii_digit())
+    }) {
+        return true;
+    }
     let lower = t.to_lowercase();
     if lower.len() <= 6 && !lower.is_empty() && lower.chars().all(|c| matches!(c, 'i' | 'v' | 'x' | 'l')) {
         return true;
@@ -316,10 +323,10 @@ mod tests {
 
     #[test]
     fn page_numbers() {
-        for s in ["12", "- 3 -", "iv", "Page 3", "Page 3 of 10", "第 3 页", "3 / 10"] {
+        for s in ["12", "- 3 -", "iv", "Page 3", "Page 3 of 10", "第 3 页", "3 / 10", "16.", "0. 1."] {
             assert!(is_page_number(s), "{s}");
         }
-        for s in ["", "Chapter 1", "3 apples", "Pages of text"] {
+        for s in ["", "Chapter 1", "3 apples", "Pages of text", "1. Introduction"] {
             assert!(!is_page_number(s), "{s}");
         }
     }
