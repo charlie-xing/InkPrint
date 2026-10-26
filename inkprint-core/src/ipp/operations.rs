@@ -256,7 +256,7 @@ fn handle_get_printer_attributes(
     if want("color-supported") {
         printer_group.add(IppAttribute::new(
             "color-supported",
-            IppValue::Boolean(false),
+            IppValue::Boolean(true),
         ));
     }
     if want("sides-supported") {
@@ -274,13 +274,16 @@ fn handle_get_printer_attributes(
     if want("print-color-mode-default") {
         printer_group.add(IppAttribute::new(
             "print-color-mode-default",
-            IppValue::Keyword("monochrome".to_string()),
+            IppValue::Keyword("color".to_string()),
         ));
     }
     if want("print-color-mode-supported") {
-        printer_group.add(IppAttribute::new(
+        printer_group.add(IppAttribute::new_multi(
             "print-color-mode-supported",
-            IppValue::Keyword("monochrome".to_string()),
+            vec![
+                IppValue::Keyword("color".to_string()),
+                IppValue::Keyword("monochrome".to_string()),
+            ],
         ));
     }
     if want("orientation-requested-default") {
@@ -435,6 +438,7 @@ fn handle_get_printer_attributes(
             vec![
                 IppValue::Keyword("CP1".to_string()),
                 IppValue::Keyword("W8".to_string()),
+                IppValue::Keyword("SRGB24".to_string()),
                 IppValue::Keyword("RS300".to_string()),
             ],
         ));

@@ -155,14 +155,14 @@ class PrinterService : Service() {
                 setAttribute("ty",       if (resource == "ipp/epub") "InkPrint Virtual EPUB Printer" else "InkPrint Virtual PDF Printer")
                 setAttribute("adminurl", "http://$ip:${DEFAULT_PORT.toInt()}/")
                 setAttribute("UUID",     uuid)
-                setAttribute("Color",    "F")
+                setAttribute("Color",    "T")
                 setAttribute("Duplex",   "F")
                 setAttribute("Fax",      "F")
                 setAttribute("Scan",     "F")
                 setAttribute("Copies",   "F")
                 setAttribute("PaperMax", "legal-A4")
                 setAttribute("note",     "E-ink reader virtual printer")
-                setAttribute("URF",      "CP1,W8,RS300")
+                setAttribute("URF",      "CP1,W8,SRGB24,RS300")
             }
 
             val listener = object : NsdManager.RegistrationListener {

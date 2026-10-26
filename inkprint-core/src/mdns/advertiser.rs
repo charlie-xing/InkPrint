@@ -45,7 +45,7 @@ impl MdnsAdvertiser {
         props.insert("Copies".to_string(),   "F".to_string());
         props.insert("PaperMax".to_string(), "legal-A4".to_string());
         props.insert("note".to_string(),     "E-ink reader virtual printer".to_string());
-        props.insert("URF".to_string(),      "CP1,W8,RS300".to_string());
+        props.insert("URF".to_string(),      "CP1,W8,SRGB24,RS300".to_string());
 
         let info = ServiceInfo::new(
             service_type,
