@@ -1,0 +1,8 @@
+- Recovers by itself when Wi-Fi connects or changes; printers no longer come and go on other devices
+- Settings: colour or black-and-white printers, and the default paper size
+- Colour interface on colour screens, black and white on black-and-white e-paper
+- Files: select, delete, clear
+- A message when a document arrives
+- Faster cancel during EPUB conversion and OCR
+- No more ".pdf.pdf" file names
+- The "Printer" tab is now "Receive"
