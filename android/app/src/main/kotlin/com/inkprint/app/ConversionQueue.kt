@@ -49,7 +49,11 @@ object ConversionQueue {
 
     enum class Kind(val dir: String) { EPUB("convert"), SEARCHABLE("ocr") }
 
-    data class Status(val kind: Kind, val name: String, val done: Int, val total: Int, val waiting: Int)
+    data class Status(
+        val kind: Kind, val name: String, val done: Int, val total: Int, val waiting: Int,
+        /** Cancel was pressed and the conversion is winding down. */
+        val cancelling: Boolean = false,
+    )
 
     private val _status = MutableStateFlow<Status?>(null)
     /** The conversion in progress, for the UI; null when idle. */
@@ -58,6 +62,9 @@ object ConversionQueue {
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "epub-convert").apply { priority = Thread.MIN_PRIORITY }
     }
+    /** The job being worked on, and the one the user asked to stop. */
+    @Volatile private var current: String? = null
+    @Volatile private var cancelled: String? = null
     private val queued = Collections.synchronizedSet(mutableSetOf<String>())
     private val main = Handler(Looper.getMainLooper())
     private val releaseIdleModels = Runnable { executor.execute { releaseModels() } }
@@ -82,20 +89,40 @@ object ConversionQueue {
         }
     }
 
-    /** Stops the running conversion after its current page; its PDF is delivered. */
-    fun cancelCurrent() = cancelConversion()
+    /**
+     * Stops the running conversion within a page step; its PDF is delivered.
+     * Remembered per job, since the core clears its flag when a conversion
+     * starts: a cancel pressed while the models are still being installed
+     * is then picked up before the core is called, and re-asserted with
+     * every page report.
+     */
+    fun cancelCurrent() {
+        val job = current ?: return
+        cancelled = job
+        _status.value?.let { _status.value = it.copy(cancelling = true) }
+        cancelConversion()
+    }
+
+    private fun isCancelled(pdf: File) = cancelled == pdf.absolutePath
+
+    private fun throwIfCancelled(pdf: File) {
+        if (isCancelled(pdf)) throw ConvertException.Cancelled("cancelled")
+    }
 
     private fun submit(context: Context, pdf: File, kind: Kind) {
         if (!queued.add(pdf.absolutePath)) return
         main.removeCallbacks(releaseIdleModels)
         _status.value?.let { _status.value = it.copy(waiting = queued.size - 1) }
         executor.execute {
+            current = pdf.absolutePath
             try {
                 when (kind) {
                     Kind.EPUB -> convert(context, pdf)
                     Kind.SEARCHABLE -> makeSearchable(context, pdf)
                 }
             } finally {
+                current = null
+                cancelled = null
                 queued.remove(pdf.absolutePath)
                 if (queued.isEmpty()) {
                     _status.value = null
@@ -117,10 +144,11 @@ object ConversionQueue {
         threads = THREADS,
     )
 
-    private fun progressFor(context: Context, nm: NotificationManager, kind: Kind, name: String) =
+    private fun progressFor(context: Context, nm: NotificationManager, kind: Kind, name: String, pdf: File) =
         object : ConversionProgress {
-            override fun onPage(done: UInt, total: UInt) =
-                report(context, nm, kind, name, done.toInt(), total.toInt())
+            override fun onPage(done: UInt, total: UInt) {
+                if (isCancelled(pdf)) cancelConversion() else report(context, nm, kind, name, done.toInt(), total.toInt())
+            }
         }
 
     private fun wakeLock(context: Context): PowerManager.WakeLock =
@@ -136,7 +164,8 @@ object ConversionQueue {
         try {
             report(context, nm, Kind.EPUB, name, 0, 0)
             val options = options(context, name, Settings.ocr(context))
-            val progress = progressFor(context, nm, Kind.EPUB, name)
+            val progress = progressFor(context, nm, Kind.EPUB, name, pdf)
+            throwIfCancelled(pdf)
             val stats = convertPdfToEpub(pdf.absolutePath, out.absolutePath, options, progress)
             Log.i(TAG, "Converted $name: $stats")
             val epub = moveTo(out, JobStorage.jobDir(context))
@@ -168,9 +197,11 @@ object ConversionQueue {
         val wake = wakeLock(context)
         try {
             report(context, nm, Kind.SEARCHABLE, name, 0, 0)
+            val options = options(context, name, true)
+            throwIfCancelled(pdf)
             val stats = makePdfSearchable(
-                pdf.absolutePath, out.absolutePath, options(context, name, true),
-                progressFor(context, nm, Kind.SEARCHABLE, name)
+                pdf.absolutePath, out.absolutePath, options,
+                progressFor(context, nm, Kind.SEARCHABLE, name, pdf)
             )
             Log.i(TAG, "Text layer for $name: $stats")
             val text = if (stats.ocrPages > 0u) {

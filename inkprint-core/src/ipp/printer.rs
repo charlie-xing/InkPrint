@@ -29,6 +29,53 @@ pub struct PrinterProfile {
     pub uuid: String,
     pub make_and_model: &'static str,
     pub output: OutputFormat,
+    pub defaults: PrintDefaults,
+}
+
+/// A paper size offered to clients: PWG keyword and size in 1/100 mm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Media {
+    pub keyword: &'static str,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Every paper size the printers offer. A smaller sheet makes text larger on
+/// the reader's screen when the sending app reflows to the page (browsers do).
+pub const MEDIA: &[Media] = &[
+    Media { keyword: "iso_a4_210x297mm",   width: 21000, height: 29700 },
+    Media { keyword: "iso_a5_148x210mm",   width: 14800, height: 21000 },
+    Media { keyword: "iso_a6_105x148mm",   width: 10500, height: 14800 },
+    Media { keyword: "iso_b5_176x250mm",   width: 17600, height: 25000 },
+    Media { keyword: "na_letter_8.5x11in", width: 21590, height: 27940 },
+];
+
+/// What the printers offer clients by default, set by the user in the app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrintDefaults {
+    /// Colour printer (clients send colour) or greyscale-only (clients
+    /// convert to grey before sending).
+    pub color: bool,
+    /// PWG media keyword of the default paper size; one of [`MEDIA`].
+    pub media: String,
+}
+
+impl Default for PrintDefaults {
+    fn default() -> Self {
+        Self { color: true, media: MEDIA[0].keyword.to_string() }
+    }
+}
+
+impl PrintDefaults {
+    /// The default paper; A4 if the stored keyword is unknown.
+    pub fn default_media(&self) -> Media {
+        MEDIA.iter().copied().find(|m| m.keyword == self.media).unwrap_or(MEDIA[0])
+    }
+
+    /// AirPrint `urf-supported` / mDNS `URF` value: SRGB24 only in colour.
+    pub fn urf(&self) -> &'static str {
+        if self.color { "CP1,W8,SRGB24,RS300" } else { "CP1,W8,RS300" }
+    }
 }
 
 pub const PDF_PRINTER_UUID: &str = "a7d4b3e2-1c5f-4d8a-9e0b-2f6c8d3a1b4e";
@@ -63,13 +110,14 @@ impl PrinterIdentity {
 impl PrinterProfile {
     /// The PDF printer, plus the EPUB printer when enabled. The PDF printer
     /// always comes first: it also answers on `/`.
-    pub fn all(identity: &PrinterIdentity, epub_enabled: bool) -> Vec<PrinterProfile> {
+    pub fn all(identity: &PrinterIdentity, epub_enabled: bool, defaults: &PrintDefaults) -> Vec<PrinterProfile> {
         let mut v = vec![PrinterProfile {
             name: identity.pdf_name.clone(),
             resource: "ipp/print",
             uuid: identity.pdf_uuid.clone(),
             make_and_model: "InkPrint Virtual PDF Printer",
             output: OutputFormat::Pdf,
+            defaults: defaults.clone(),
         }];
         if epub_enabled {
             v.push(PrinterProfile {
@@ -78,6 +126,7 @@ impl PrinterProfile {
                 uuid: identity.epub_uuid.clone(),
                 make_and_model: "InkPrint Virtual EPUB Printer",
                 output: OutputFormat::Epub,
+                defaults: defaults.clone(),
             });
         }
         v
@@ -104,9 +153,9 @@ pub struct PrinterState {
 }
 
 impl PrinterState {
-    pub fn new(identity: &PrinterIdentity, epub_enabled: bool, storage_dir: PathBuf) -> Self {
+    pub fn new(identity: &PrinterIdentity, epub_enabled: bool, defaults: &PrintDefaults, storage_dir: PathBuf) -> Self {
         Self {
-            profiles: PrinterProfile::all(identity, epub_enabled),
+            profiles: PrinterProfile::all(identity, epub_enabled, defaults),
             storage_dir,
             job_counter: AtomicU32::new(1),
             active_jobs: DashMap::new(),
@@ -134,7 +183,7 @@ mod tests {
 
     #[test]
     fn paths_map_to_profiles() {
-        let s = PrinterState::new(&PrinterIdentity::fixed("InkPrint"), true, PathBuf::new());
+        let s = PrinterState::new(&PrinterIdentity::fixed("InkPrint"), true, &PrintDefaults::default(), PathBuf::new());
         assert_eq!(s.profile_for_path("/").unwrap().output, OutputFormat::Pdf);
         assert_eq!(s.profile_for_path("/ipp/print").unwrap().output, OutputFormat::Pdf);
         let epub = s.profile_for_path("/ipp/epub").unwrap();
@@ -145,7 +194,7 @@ mod tests {
 
     #[test]
     fn epub_path_is_gone_when_disabled() {
-        let s = PrinterState::new(&PrinterIdentity::fixed("InkPrint"), false, PathBuf::new());
+        let s = PrinterState::new(&PrinterIdentity::fixed("InkPrint"), false, &PrintDefaults::default(), PathBuf::new());
         assert!(s.profile_for_path("/ipp/epub").is_none());
         assert_eq!(s.profiles.len(), 1);
     }

@@ -32,13 +32,41 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 
-// E-ink look: pure black on white, borders and inverted (white-on-black)
-// blocks instead of colour and shade, no animation of any kind. Electronic
-// paper shows two tones well, greys as dither, and every animation frame as
-// a partial refresh that leaves ghosting.
+// E-ink look: black on white, borders and solid blocks instead of shade, no
+// animation of any kind. Electronic paper shows greys as dither and every
+// animation frame as a partial refresh that leaves ghosting.
+//
+// The solid blocks (primary buttons, the chosen tab or option, progress, the
+// running status, notices) are black on black-and-white screens and coloured
+// everywhere else. The colours are dark and saturated so they survive the
+// washed-out palette of colour e-paper (Kaleido) and carry white text.
 
 val Ink = Color.Black
 val Paper = Color.White
+
+/** Fills of the solid blocks; text on them is [Paper]. */
+data class InkPalette(
+    /** Primary buttons, the chosen tab / option / toggle side, progress, steps. */
+    val accent: Color,
+    /** The running status. */
+    val good: Color,
+    /** Notices that need attention. */
+    val warn: Color,
+)
+
+val MonoPalette = InkPalette(accent = Ink, good = Ink, warn = Ink)
+val ColorPalette = InkPalette(
+    accent = Color(0xFF0B57D0),  // blue
+    good = Color(0xFF146C2E),    // green
+    warn = Color(0xFFB3261E),    // red
+)
+
+val LocalInkPalette = staticCompositionLocalOf { MonoPalette }
+
+/** The current palette's fills. */
+val Accent: Color @Composable get() = LocalInkPalette.current.accent
+val Good: Color @Composable get() = LocalInkPalette.current.good
+val Warn: Color @Composable get() = LocalInkPalette.current.warn
 
 private val InkColors = lightColorScheme(
     primary = Ink, onPrimary = Paper,
@@ -76,7 +104,7 @@ private object NoIndication : IndicationNodeFactory {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InkTheme(content: @Composable () -> Unit) {
+fun InkTheme(color: Boolean, content: @Composable () -> Unit) {
     val square = androidx.compose.foundation.shape.RoundedCornerShape(0.dp)
     MaterialTheme(colorScheme = InkColors, typography = InkType, shapes = Shapes(
         extraSmall = square, small = square, medium = square, large = square, extraLarge = square,
@@ -86,6 +114,7 @@ fun InkTheme(content: @Composable () -> Unit) {
             LocalRippleConfiguration provides null,
             LocalTextSelectionColors provides TextSelectionColors(handleColor = Ink, backgroundColor = Paper),
             LocalContentColor provides Ink,
+            LocalInkPalette provides if (color) ColorPalette else MonoPalette,
         ) {
             Surface(color = Paper, contentColor = Ink, content = content)
         }
@@ -110,9 +139,9 @@ fun InkButton(
     Box(
         modifier = modifier
             .heightIn(min = height)
-            .background(if (filled) Ink else Paper)
+            .background(if (filled) Accent else Paper)
             // Disabled: a hairline frame and plain text — no grey on e-ink.
-            .border(if (enabled) 2.dp else 1.dp, Ink)
+            .border(if (enabled) 2.dp else 1.dp, if (filled) Accent else Ink)
             .tap(enabled, onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
@@ -176,7 +205,7 @@ fun InkToggle(title: String, subtitle: String?, checked: Boolean, onChange: (Boo
                 Box(
                     Modifier
                         .size(width = 58.dp, height = 48.dp)
-                        .background(if (on) Ink else Paper)
+                        .background(if (on) Accent else Paper)
                         .tap { if (!on) onChange(value) },
                     contentAlignment = Alignment.Center
                 ) {
@@ -198,7 +227,7 @@ fun <T> InkSegmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) 
                 Modifier
                     .weight(1f)
                     .height(48.dp)
-                    .background(if (on) Ink else Paper)
+                    .background(if (on) Accent else Paper)
                     .tap { onSelect(value) },
                 contentAlignment = Alignment.Center
             ) {
@@ -228,7 +257,7 @@ fun InkTabBar(tabs: List<String>, selected: Int, onSelect: (Int) -> Unit) {
                     Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .background(if (on) Ink else Paper)
+                        .background(if (on) Accent else Paper)
                         .tap { onSelect(i) },
                     contentAlignment = Alignment.Center
                 ) {
@@ -275,7 +304,7 @@ fun InkNotice(text: String) {
         color = Paper,
         fontSize = 15.sp,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier.fillMaxWidth().background(Ink).padding(12.dp)
+        modifier = Modifier.fillMaxWidth().background(Warn).padding(12.dp)
     )
 }
 
@@ -306,7 +335,7 @@ fun CopyableText(text: String) {
 fun Step(number: Int, text: String) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         Box(
-            modifier = Modifier.size(28.dp).background(Ink),
+            modifier = Modifier.size(28.dp).background(Accent),
             contentAlignment = Alignment.Center
         ) {
             Text(number.toString(), color = Paper, fontSize = 15.sp, fontWeight = FontWeight.Bold)
@@ -346,7 +375,7 @@ fun CodeBlock(text: String) {
 @Composable
 fun InkProgress(fraction: Float, modifier: Modifier = Modifier, height: Dp = 14.dp) {
     Box(modifier.fillMaxWidth().height(height).border(1.5.dp, Ink)) {
-        Box(Modifier.fillMaxHeight().fillMaxWidth(fraction.coerceIn(0f, 1f)).background(Ink))
+        Box(Modifier.fillMaxHeight().fillMaxWidth(fraction.coerceIn(0f, 1f)).background(Accent))
     }
 }
 

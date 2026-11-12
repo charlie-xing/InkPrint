@@ -42,9 +42,18 @@ class MainActivity : ComponentActivity() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == PrinterService.BROADCAST_JOB_RECEIVED) {
                 jobTick++
+                // The notification is easy to miss with the app open (or off
+                // altogether without the permission): say it here as well.
+                val name = intent.getStringExtra("file_name")
+                if (name != null && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                    Toast.makeText(context, getString(R.string.job_received_toast, FileEntry(name, "", 0, 0).displayName), Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
+
+    // Colour or black-and-white look (Settings.colorUi)
+    private var colorUi by mutableStateOf(false)
 
     // Save folder picked by the user; null until one is chosen
     private var treeUri by mutableStateOf<Uri?>(null)
@@ -77,13 +86,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestRuntimePermissions()
         treeUri = SaveFolder.treeUri(this)
+        colorUi = Settings.colorUi(this)
         registerReceiver(
             jobReceiver,
             IntentFilter(PrinterService.BROADCAST_JOB_RECEIVED),
             RECEIVER_NOT_EXPORTED
         )
         setContent {
-            InkTheme { InkPrintApp() }
+            InkTheme(color = colorUi) { InkPrintApp() }
         }
     }
 
@@ -193,18 +203,24 @@ class MainActivity : ComponentActivity() {
         var epubPrinter by remember { mutableStateOf(Settings.epubPrinter(this@MainActivity)) }
         val port = PrinterService.DEFAULT_PORT.toInt()
         // Re-read on resume: Wi-Fi or Tailscale may have come up or changed address
-        val addresses = remember(jobTick) { PrinterAddresses.list() }
+        val network by PrinterService.networkChanges.collectAsState()
+        val addresses = remember(jobTick, network, running) { PrinterAddresses.list() }
 
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (tab) {
                     0 -> PrinterTab(running, addresses, port, epubPrinter)
                     1 -> FilesTab()
-                    2 -> SettingsTab(epubPrinter, onEpubPrinter = { on ->
-                        Settings.setEpubPrinter(this@MainActivity, on)
-                        epubPrinter = on
-                        if (running) restartPrinterService()
-                    })
+                    2 -> SettingsTab(
+                        epubPrinter,
+                        onEpubPrinter = { on ->
+                            Settings.setEpubPrinter(this@MainActivity, on)
+                            epubPrinter = on
+                            if (running) restartPrinterService()
+                        },
+                        // Colour and paper are printer attributes: re-advertise them
+                        onPrinterChanged = { if (running) restartPrinterService() },
+                    )
                     else -> HelpTab(addresses, port.toString(), epubPrinter)
                 }
             }
@@ -245,8 +261,8 @@ class MainActivity : ComponentActivity() {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .background(if (running) Ink else Paper)
-                    .border(2.dp, Ink)
+                    .background(if (running) Good else Paper)
+                    .border(2.dp, if (running) Good else Ink)
                     .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -323,10 +339,20 @@ class MainActivity : ComponentActivity() {
                     InkProgress(if (s.total > 0) s.done.toFloat() / s.total else 0f, height = 10.dp)
                 }
                 Spacer(Modifier.width(12.dp))
-                InkButton(stringResource(R.string.cancel), onClick = { ConversionQueue.cancelCurrent() }, height = 48.dp)
+                CancelButton(s, height = 48.dp)
             }
         }
     }
+
+    /** Greys out once pressed: stopping waits for the current OCR step, a few seconds on e-ink readers. */
+    @Composable
+    private fun CancelButton(s: ConversionQueue.Status, height: androidx.compose.ui.unit.Dp = 56.dp) =
+        InkButton(
+            stringResource(if (s.cancelling) R.string.cancelling else R.string.cancel),
+            onClick = { ConversionQueue.cancelCurrent() },
+            enabled = !s.cancelling,
+            height = height
+        )
 
     @Composable
     private fun progressText(s: ConversionQueue.Status): String =
@@ -352,7 +378,7 @@ class MainActivity : ComponentActivity() {
                     Text(progressText(s), fontSize = 16.sp)
                     if (s.waiting > 0) Text(stringResource(R.string.progress_waiting, s.waiting), fontSize = 14.sp)
                 }
-                InkButton(stringResource(R.string.cancel), onClick = { ConversionQueue.cancelCurrent() })
+                CancelButton(s)
             }
         }
     }
@@ -361,7 +387,7 @@ class MainActivity : ComponentActivity() {
     private fun FilesTab() {
         // Rows per page from the space available, so a page never scrolls.
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val rows = ((maxHeight - 260.dp) / 76.dp).toInt().coerceIn(3, 12)
+            val rows = ((maxHeight - 320.dp) / 76.dp).toInt().coerceIn(3, 12)
             TabPage {
                 val tree = treeUri
                 if (tree != null) {
@@ -379,6 +405,13 @@ class MainActivity : ComponentActivity() {
                         files = files,
                         pageSize = rows,
                         onOpen = { openFile(it) },
+                        onDelete = { victims ->
+                            lifecycleScope.launch {
+                                val failed = withContext(Dispatchers.IO) { victims.count { !File(it.path).delete() } }
+                                if (failed > 0) Toast.makeText(this@MainActivity, getString(R.string.delete_failed), Toast.LENGTH_SHORT).show()
+                                jobTick++
+                            }
+                        },
                         onChooseFolder = { pickSaveFolder() }
                     )
                 }
@@ -387,7 +420,9 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun SettingsTab(epubPrinter: Boolean, onEpubPrinter: (Boolean) -> Unit) {
+    private fun SettingsTab(epubPrinter: Boolean, onEpubPrinter: (Boolean) -> Unit, onPrinterChanged: () -> Unit) {
+        var color by remember { mutableStateOf(Settings.color(this)) }
+        var media by remember { mutableStateOf(Settings.media(this)) }
         var keepPdf by remember { mutableStateOf(Settings.keepPdf(this)) }
         var ocr by remember { mutableStateOf(Settings.ocr(this)) }
         var searchable by remember { mutableStateOf(Settings.searchablePdf(this)) }
@@ -410,6 +445,58 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             )
+
+            InkHeading(stringResource(R.string.ui_color))
+            var uiColor by remember { mutableStateOf(Settings.uiColor(this@MainActivity)) }
+            InkSegmented(
+                options = listOf(
+                    Settings.UiColor.AUTO to stringResource(R.string.ui_color_auto),
+                    Settings.UiColor.COLOR to stringResource(R.string.ui_color_color),
+                    Settings.UiColor.MONO to stringResource(R.string.ui_color_mono),
+                ),
+                selected = uiColor,
+                onSelect = { choice ->
+                    Settings.setUiColor(this@MainActivity, choice)
+                    uiColor = choice
+                    colorUi = Settings.colorUi(this@MainActivity)
+                }
+            )
+            Text(
+                stringResource(
+                    R.string.ui_color_detected,
+                    stringResource(
+                        when {
+                            Device.isColorEink -> R.string.device_color_eink
+                            Device.isEink -> R.string.device_mono_eink
+                            else -> R.string.device_color_screen
+                        }
+                    )
+                ),
+                fontSize = 14.sp
+            )
+
+            InkHeading(stringResource(R.string.print_output))
+            Text(stringResource(R.string.color_mode), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            InkSegmented(
+                options = listOf(true to stringResource(R.string.color_mode_color), false to stringResource(R.string.color_mode_mono)),
+                selected = color,
+                onSelect = { on ->
+                    if (on != color) {
+                        Settings.setColor(this@MainActivity, on); color = on; onPrinterChanged()
+                    }
+                }
+            )
+            Text(stringResource(R.string.paper_size), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            InkSegmented(
+                options = Settings.PAPERS,
+                selected = media,
+                onSelect = { m ->
+                    if (m != media) {
+                        Settings.setMedia(this@MainActivity, m); media = m; onPrinterChanged()
+                    }
+                }
+            )
+            Text(stringResource(R.string.print_output_note), fontSize = 14.sp)
 
             if (BuildConfig.EPUB) {
                 InkHeading(stringResource(R.string.epub_printer))

@@ -81,9 +81,18 @@ pub trait Progress {
 
 static CANCEL: AtomicBool = AtomicBool::new(false);
 
-/// Asks the running conversion to stop after the current page.
+/// Asks the running conversion to stop. It is checked between the steps of
+/// a page (render, layout, OCR), so it takes effect within one model run.
 pub fn cancel() {
     CANCEL.store(true, Ordering::SeqCst);
+}
+
+fn cancelled() -> bool {
+    CANCEL.load(Ordering::SeqCst)
+}
+
+fn check_cancel() -> Result<(), Error> {
+    if cancelled() { Err(Error::Cancelled) } else { Ok(()) }
 }
 
 /// Frees the layout/OCR models until the next conversion needs them.
@@ -119,6 +128,7 @@ pub fn convert(pdf: &Path, out: &Path, opts: &Options, progress: Option<&dyn Pro
         .map_err(|e| Error::Pdf(format!("cannot open {}: {e}", pdf.display())))?;
 
     let engine = load_engine(opts);
+    check_cancel()?;
     let total = doc.pages().len() as u32;
     let part = out.with_extension("epub.part");
     let result = (|| {
@@ -126,9 +136,7 @@ pub fn convert(pdf: &Path, out: &Path, opts: &Options, progress: Option<&dyn Pro
         let mut stats = Stats { pages: total, layout_model: engine.is_some(), ..Default::default() };
         let mut pages = Vec::with_capacity(total as usize);
         for (i, page) in doc.pages().iter().enumerate() {
-            if CANCEL.load(Ordering::SeqCst) {
-                return Err(Error::Cancelled);
-            }
+            check_cancel()?;
             let p = convert_page(&page, i, engine.as_ref(), opts, &mut writer, i == 0)?;
             stats.ocr_pages += p.ocr as u32;
             stats.image_pages += p.full_image as u32;
@@ -138,6 +146,7 @@ pub fn convert(pdf: &Path, out: &Path, opts: &Options, progress: Option<&dyn Pro
             }
         }
 
+        check_cancel()?;
         let zh = is_mostly_cjk(&pages);
         let assembly = book::assemble(pages, true, zh);
         let title = if !opts.title.trim().is_empty() {
@@ -194,10 +203,9 @@ pub fn make_searchable(pdf: &Path, out: &Path, opts: &Options, progress: Option<
         .map_err(|e| Error::Pdf(format!("cannot open {}: {e}", pdf.display())))?;
     let total = doc.pages().len() as u32;
     let mut layers = Vec::new();
+    check_cancel()?;
     for (i, page) in doc.pages().iter().enumerate() {
-        if CANCEL.load(Ordering::SeqCst) {
-            return Err(Error::Cancelled);
-        }
+        check_cancel()?;
         let scale = (DPI / 72.0).min(MAX_RENDER_PX / page.width().value.max(1.0));
         let info = pdf::analyze(&page, scale);
         let picture_area: f32 = info.images.iter().map(|r| r.area()).sum();
@@ -221,6 +229,7 @@ pub fn make_searchable(pdf: &Path, out: &Path, opts: &Options, progress: Option<
             cb.on_page(i as u32 + 1, total);
         }
     }
+    check_cancel()?;
     drop(doc);
     let part = out.with_extension("pdf.part");
     let written = searchable::write(pdf, &part, &layers).and_then(|_| Ok(std::fs::rename(&part, out)?));
@@ -290,7 +299,11 @@ fn convert_page<W: std::io::Write + std::io::Seek>(
         writer.set_cover(&jpeg(&thumb)?)?;
     }
 
-    let Some((regions, used_ocr)) = analyze_page(&info, &bitmap, scale, index, engine, opts) else {
+    check_cancel()?;
+    let analyzed = analyze_page(&info, &bitmap, scale, index, engine, opts);
+    // A cancel during layout/OCR leaves the page half analysed: drop it.
+    check_cancel()?;
+    let Some((regions, used_ocr)) = analyzed else {
         // Nothing to read: keep the page as a picture, unless it is blank.
         if is_blank(&bitmap) {
             return Ok(Page { blocks: Vec::new(), ocr: false, full_image: false });
@@ -368,7 +381,7 @@ fn analyze_page(
 
 #[cfg(feature = "ocr")]
 fn ocr_lines(engine: Option<&EngineRef>, opts: &Options, bitmap: &RgbImage, scale: f32, index: usize) -> Option<Vec<text::Line>> {
-    if !opts.ocr {
+    if !opts.ocr || cancelled() {
         return None;
     }
     match engine?.ocr(bitmap, scale) {

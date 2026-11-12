@@ -2,9 +2,14 @@ package com.inkprint.app
 
 import android.app.*
 import android.content.Intent
-import android.net.nsd.NsdManager
-import android.net.nsd.NsdServiceInfo
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiManager
+import android.os.Handler
+import android.os.Looper
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -32,13 +37,22 @@ class PrinterService : Service() {
         private val _running = kotlinx.coroutines.flow.MutableStateFlow(false)
         /** Whether the printer server is up, for the UI. */
         val running: kotlinx.coroutines.flow.StateFlow<Boolean> = _running
+
+        private val _networkChanges = kotlinx.coroutines.flow.MutableStateFlow(0)
+        /** Bumped whenever the device's networks change, so the UI re-reads its addresses. */
+        val networkChanges: kotlinx.coroutines.flow.StateFlow<Int> = _networkChanges
+
+        /** Let a burst of network callbacks (DHCP, IPv6, a VPN) settle before acting. */
+        private const val NETWORK_SETTLE_MS = 2000L
     }
 
     private var isRunning = false
     private var multicastLock: WifiManager.MulticastLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
-    private var nsdManager: NsdManager? = null
-    private val nsdListeners = mutableListOf<NsdManager.RegistrationListener>()
+    private val handler = Handler(Looper.getMainLooper())
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    /** The LAN addresses the server was started with; a change means restarting it. */
+    private var startedOn: Set<String> = emptySet()
 
     private val printJobListener = object : PrintJobListener {
         override fun onJobReceived(jobId: UInt, filePath: String, fileName: String, sizeBytes: ULong, output: OutputFormat) {
@@ -54,6 +68,7 @@ class PrinterService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                unwatchNetwork()
                 stopPrinterService()
                 stopSelf()
                 return START_NOT_STICKY
@@ -63,11 +78,7 @@ class PrinterService : Service() {
                 if (!isRunning) stopSelf()
                 return START_NOT_STICKY
             }
-            ACTION_RESTART -> {
-                stopPrinterService()
-                // The core frees the port and mDNS names asynchronously.
-                android.os.Handler(mainLooper).postDelayed({ startPrinterService() }, 1000)
-            }
+            ACTION_RESTART -> restart()
             else -> startPrinterService()
         }
         return START_STICKY
@@ -76,12 +87,79 @@ class PrinterService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        unwatchNetwork()
+        handler.removeCallbacksAndMessages(null)
         stopPrinterService()
         super.onDestroy()
     }
 
+    private fun restart() {
+        stopPrinterService()
+        // The core frees the port and mDNS names asynchronously.
+        handler.removeCallbacks(startRunnable)
+        handler.postDelayed(startRunnable, 1000)
+    }
+
+    private val startRunnable = Runnable { startPrinterService() }
+
+    /** Wi-Fi and Ethernet addresses: what the core picks its address and mDNS records from. */
+    private fun lanAddresses(): Set<String> =
+        PrinterAddresses.list().filter { it.label == "Wi-Fi" || it.label == "Ethernet" }.map { it.ip }.toSet()
+
+    /**
+     * The core reads the device's address once, when it starts: started
+     * before Wi-Fi was up, or kept running across a reconnect or a new DHCP
+     * lease, it would go on announcing an address nobody can reach. So
+     * watch the networks and restart the server when its LAN addresses change.
+     */
+    private fun watchNetwork() {
+        if (networkCallback != null) return
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = networkChanged()
+            override fun onLost(network: Network) = networkChanged()
+            override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) = networkChanged()
+        }
+        // Every network, local-only Wi-Fi and VPNs (Tailscale) included
+        val request = NetworkRequest.Builder()
+            .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        try {
+            cm.registerNetworkCallback(request, callback)
+            networkCallback = callback
+        } catch (e: Exception) {
+            Log.w(TAG, "Cannot watch networks: ${e.message}")
+        }
+    }
+
+    private fun unwatchNetwork() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        handler.removeCallbacks(settleNetwork)
+        try {
+            getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback)
+        } catch (_: Exception) {}
+    }
+
+    /** Called on a binder thread, possibly many times in a row. */
+    private fun networkChanged() {
+        handler.removeCallbacks(settleNetwork)
+        handler.postDelayed(settleNetwork, NETWORK_SETTLE_MS)
+    }
+
+    private val settleNetwork = Runnable {
+        _networkChanges.value++
+        val now = lanAddresses()
+        if (isRunning && now != startedOn) {
+            Log.i(TAG, "LAN addresses changed $startedOn -> $now: restarting the server")
+            restart()
+        }
+    }
+
     private fun startPrinterService() {
         if (isRunning) return
+        watchNetwork()
 
         val storageDir = JobStorage.jobDir(this)
 
@@ -106,6 +184,7 @@ class PrinterService : Service() {
                 storagePath = storageDir.absolutePath,
                 identity = Settings.identity(this),
                 epubEnabled = Settings.epubPrinter(this),
+                defaults = Settings.printDefaults(this),
                 listener = printJobListener
             )
         } catch (e: Exception) {
@@ -116,10 +195,10 @@ class PrinterService : Service() {
         isRunning = started
         _running.value = started
         if (started) {
+            startedOn = lanAddresses()
             val ip = try { getLocalIp() } catch (e: Exception) { "unknown" }
             Log.i(TAG, "InkPrint server started on $ip:$DEFAULT_PORT")
             updateNotification(Lang.string(this, R.string.notif_running_on, "$ip:$DEFAULT_PORT"))
-            registerMdns(ip)
             // EPUB jobs a killed process left half done
             if (BuildConfig.EPUB) ConversionQueue.resume(this)
         } else {
@@ -128,78 +207,8 @@ class PrinterService : Service() {
         }
     }
 
-    private fun registerMdns(ip: String) {
-        val nsd = getSystemService(NSD_SERVICE) as NsdManager
-        nsdManager = nsd
-        // One service per printer, the same set the core advertises itself.
-        val id = Settings.identity(this)
-        val printers = buildList {
-            add(Triple(id.pdfName, "ipp/print", id.pdfUuid))
-            if (Settings.epubPrinter(this@PrinterService)) {
-                add(Triple(id.epubName, "ipp/epub", id.epubUuid))
-            }
-        }
-        for ((name, resource, uuid) in printers) {
-            // Register _universal._sub._ipp._tcp.
-            // On Android 12+ mDNSResponder (per RFC 6763 §7.1) automatically creates BOTH:
-            //   • _ipp._tcp.local.              PTR → InkPrint._ipp._tcp.local.  (base, for all clients)
-            //   • _universal._sub._ipp._tcp.local. PTR → InkPrint._ipp._tcp.local.  (AirPrint subtype)
-            // macOS reads the _universal subtype to auto-select "AirPrint" in Add Printer.
-            val info = NsdServiceInfo().apply {
-                serviceName = name
-                serviceType = "_universal._sub._ipp._tcp"
-                port = DEFAULT_PORT.toInt()
-                setAttribute("txtvers",  "1")
-                setAttribute("pdl",      "application/pdf,image/urf")  // keep in sync with SUPPORTED_DOCUMENT_FORMATS in the core
-                setAttribute("rp",       resource)
-                setAttribute("ty",       if (resource == "ipp/epub") "InkPrint Virtual EPUB Printer" else "InkPrint Virtual PDF Printer")
-                setAttribute("adminurl", "http://$ip:${DEFAULT_PORT.toInt()}/")
-                setAttribute("UUID",     uuid)
-                setAttribute("Color",    "T")
-                setAttribute("Duplex",   "F")
-                setAttribute("Fax",      "F")
-                setAttribute("Scan",     "F")
-                setAttribute("Copies",   "F")
-                setAttribute("PaperMax", "legal-A4")
-                setAttribute("note",     "E-ink reader virtual printer")
-                setAttribute("URF",      "CP1,W8,SRGB24,RS300")
-            }
-
-            val listener = object : NsdManager.RegistrationListener {
-                override fun onRegistrationFailed(si: NsdServiceInfo, err: Int) {
-                    Log.e(TAG, "mDNS register of $name FAILED err=$err")
-                }
-                override fun onUnregistrationFailed(si: NsdServiceInfo, err: Int) {
-                    Log.w(TAG, "mDNS unregister of $name failed err=$err")
-                }
-                override fun onServiceRegistered(si: NsdServiceInfo) {
-                    Log.i(TAG, "mDNS registered: ${si.serviceName} [_universal._sub._ipp._tcp] rp=$resource")
-                }
-                override fun onServiceUnregistered(si: NsdServiceInfo) {
-                    Log.i(TAG, "mDNS unregistered: ${si.serviceName}")
-                }
-            }
-            try {
-                nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener)
-                nsdListeners += listener
-            } catch (e: Exception) {
-                Log.e(TAG, "NsdManager register of $name exception: ${e.message}")
-            }
-        }
-    }
-
-    private fun unregisterMdns() {
-        val nsd = nsdManager ?: return
-        for (l in nsdListeners) {
-            try { nsd.unregisterService(l) } catch (_: Exception) {}
-        }
-        nsdListeners.clear()
-        nsdManager = null
-    }
-
     private fun stopPrinterService() {
         if (!isRunning) return
-        unregisterMdns()
         try {
             stopServer()
         } catch (e: Exception) {
@@ -230,7 +239,7 @@ class PrinterService : Service() {
         }
         if (background != null) {
             ConversionQueue.enqueue(this, jobFile, background)
-            sendBroadcast(Intent(BROADCAST_JOB_RECEIVED).setPackage(packageName))
+            sendBroadcast(Intent(BROADCAST_JOB_RECEIVED).setPackage(packageName).putExtra("file_name", fileName))
             return
         }
 

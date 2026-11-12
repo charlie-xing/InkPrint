@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use once_cell::sync::Lazy;
 use server::listener::{ServerConfig, ServerHandle, start, get_local_ip as inner_get_local_ip};
 use ipp::operations::PrintJobCallback;
-pub use ipp::printer::{OutputFormat, PrinterIdentity};
+pub use ipp::printer::{OutputFormat, PrintDefaults, PrinterIdentity};
 
 /// UniFFI callback interface — implemented by Kotlin
 pub trait PrintJobListener: Send + Sync {
@@ -58,6 +58,7 @@ pub fn start_server(
     storage_path: String,
     identity: PrinterIdentity,
     epub_enabled: bool,
+    defaults: PrintDefaults,
     listener: Option<Arc<dyn PrintJobListener>>,
 ) -> bool {
     #[cfg(target_os = "android")]
@@ -85,6 +86,7 @@ pub fn start_server(
         storage_dir: std::path::PathBuf::from(&storage_path),
         identity,
         epub_enabled,
+        defaults,
         callback,
     };
 

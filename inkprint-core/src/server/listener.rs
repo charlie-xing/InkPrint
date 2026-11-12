@@ -6,7 +6,7 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
 use crate::ipp::operations::PrintJobCallback;
-use crate::ipp::printer::{PrinterIdentity, PrinterState};
+use crate::ipp::printer::{PrinterIdentity, PrinterState, PrintDefaults};
 use crate::mdns::advertiser::MdnsAdvertiser;
 use super::http::HttpServer;
 
@@ -16,6 +16,8 @@ pub struct ServerConfig {
     pub identity: PrinterIdentity,
     /// Also serve (and advertise) the EPUB printer on /ipp/epub.
     pub epub_enabled: bool,
+    /// Colour mode and paper size the printers offer by default.
+    pub defaults: PrintDefaults,
     pub callback: Option<Arc<dyn PrintJobCallback>>,
 }
 
@@ -68,6 +70,7 @@ pub async fn start(config: ServerConfig) -> Result<ServerHandle, Box<dyn std::er
     let printer = Arc::new(PrinterState::new(
         &config.identity,
         config.epub_enabled,
+        &config.defaults,
         config.storage_dir,
     ));
 

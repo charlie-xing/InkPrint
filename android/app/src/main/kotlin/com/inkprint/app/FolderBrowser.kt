@@ -3,6 +3,7 @@ package com.inkprint.app
 import android.content.Context
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.OutlinedTextField
@@ -44,11 +45,23 @@ private sealed interface BrowserDialog {
 
 /** Received files in the app directory, a page at a time, with a prompt to pick a save folder. */
 @Composable
-fun FileList(files: List<FileEntry>, pageSize: Int, onOpen: (String) -> Unit, onChooseFolder: () -> Unit) {
+fun FileList(
+    files: List<FileEntry>,
+    pageSize: Int,
+    onOpen: (String) -> Unit,
+    onDelete: (List<FileEntry>) -> Unit,
+    onChooseFolder: () -> Unit,
+) {
     val dateFmt = remember { SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()) }
     var page by remember { mutableStateOf(0) }
     val pages = maxOf(1, (files.size + pageSize - 1) / pageSize)
     if (page >= pages) page = 0
+    var selecting by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    var confirm by remember { mutableStateOf<Pair<List<FileEntry>, Boolean>?>(null) }
+    // Files that went away (deleted, delivered elsewhere) drop out of the selection
+    val present = files.map { it.path }.toSet()
+    if (!present.containsAll(selected)) selected = selected intersect present
 
     FilesHeader(stringResource(R.string.printed_files), files.size)
     InkCard {
@@ -58,16 +71,43 @@ fun FileList(files: List<FileEntry>, pageSize: Int, onOpen: (String) -> Unit, on
     if (files.isEmpty()) {
         EmptyNote(stringResource(R.string.no_files_yet))
     } else {
+        SelectionBar(
+            selecting = selecting,
+            selected = selected.size,
+            all = selected.size == files.size,
+            onSelect = { selecting = true },
+            onClear = { confirm = files to true },
+            onToggleAll = { selected = if (selected.size == files.size) emptySet() else present },
+            onDelete = { confirm = files.filter { it.path in selected } to false },
+            onDone = { selecting = false; selected = emptySet() },
+        )
         files.drop(page * pageSize).take(pageSize).forEach { f ->
             EntryRow(
                 tag = fileTag(f.name),
                 name = f.displayName,
                 subtitle = "${dateFmt.format(Date(f.modifiedMs))} · ${formatSize(f.sizeBytes)}",
-                onClick = { onOpen(f.path) },
-                onMore = null
+                onClick = {
+                    if (selecting) selected = selected.toggle(f.path) else onOpen(f.path)
+                },
+                onMore = null,
+                checked = if (selecting) f.path in selected else null,
             )
         }
         Pager(page, pages) { page = it }
+    }
+
+    confirm?.let { (victims, clear) ->
+        ConfirmDelete(
+            text = if (clear) stringResource(R.string.clear_text, victims.size)
+                else stringResource(R.string.delete_selected_text, victims.size),
+            onDismiss = { confirm = null },
+            onConfirm = {
+                confirm = null
+                selecting = false
+                selected = emptySet()
+                onDelete(victims)
+            }
+        )
     }
 }
 
@@ -95,6 +135,10 @@ fun FolderBrowser(
     var reload by remember { mutableStateOf(0) }
     var page by remember(tree, current) { mutableStateOf(0) }
     var dialog by remember { mutableStateOf<BrowserDialog?>(null) }
+    var selecting by remember(tree, current) { mutableStateOf(false) }
+    var selected by remember(tree, current) { mutableStateOf(setOf<String>()) }
+    /** Entries waiting for the user to confirm their deletion, and whether that is "Clear". */
+    var confirm by remember { mutableStateOf<Pair<List<DocEntry>, Boolean>?>(null) }
 
     // null while loading; a failure (folder deleted, grant lost) shows as an error line
     val listing by produceState<Result<List<DocEntry>>?>(null, tree, current, refreshTick, reload) {
@@ -117,6 +161,20 @@ fun FolderBrowser(
 
     val pages = maxOf(1, (entries.size + pageSize - 1) / pageSize)
     if (page >= pages) page = 0
+    val present = entries.map { it.documentId }.toSet()
+    if (!present.containsAll(selected)) selected = selected intersect present
+    val files = entries.filter { !it.isFolder }
+
+    /** Delete [victims] off the main thread, report what failed, then refresh. */
+    fun deleteAll(victims: List<DocEntry>, failure: String) {
+        scope.launch {
+            val failed = withContext(Dispatchers.IO) {
+                victims.count { e -> !runCatching { SaveFolder.delete(context, e.uri) }.getOrDefault(false) }
+            }
+            if (failed > 0) Toast.makeText(context, failure, Toast.LENGTH_SHORT).show()
+            reload++
+        }
+    }
 
     FilesHeader(stringResource(R.string.printed_files), entries.size)
     // Where we are; tap a segment to go back up to it.
@@ -150,6 +208,16 @@ fun FolderBrowser(
             stringResource(if (path.size == 1) R.string.no_files_yet else R.string.folder_empty)
         )
         else -> {
+            SelectionBar(
+                selecting = selecting,
+                selected = selected.size,
+                all = selected.size == entries.size,
+                onSelect = { selecting = true },
+                onClear = if (files.isEmpty()) null else ({ confirm = files to true }),
+                onToggleAll = { selected = if (selected.size == entries.size) emptySet() else present },
+                onDelete = { confirm = entries.filter { it.documentId in selected } to false },
+                onDone = { selecting = false; selected = emptySet() },
+            )
             entries.drop(page * pageSize).take(pageSize).forEach { entry ->
                 EntryRow(
                     tag = if (entry.isFolder) stringResource(R.string.tag_folder) else fileTag(entry.name),
@@ -157,14 +225,37 @@ fun FolderBrowser(
                     subtitle = if (entry.isFolder) stringResource(R.string.folder)
                         else "${dateFmt.format(Date(entry.modifiedMs))} · ${formatSize(entry.sizeBytes)}",
                     onClick = {
-                        if (entry.isFolder) path = path + Crumb(entry.documentId, entry.name)
-                        else onOpen(entry)
+                        when {
+                            selecting -> selected = selected.toggle(entry.documentId)
+                            entry.isFolder -> path = path + Crumb(entry.documentId, entry.name)
+                            else -> onOpen(entry)
+                        }
                     },
-                    onMore = { dialog = BrowserDialog.Actions(entry) },
+                    onMore = if (selecting) null else ({ dialog = BrowserDialog.Actions(entry) }),
+                    checked = if (selecting) entry.documentId in selected else null,
                 )
             }
             Pager(page, pages) { page = it }
         }
+    }
+
+    confirm?.let { (victims, clear) ->
+        val failed = stringResource(R.string.delete_failed)
+        val folders = victims.count { it.isFolder }
+        ConfirmDelete(
+            text = when {
+                clear -> stringResource(R.string.clear_text, victims.size)
+                victims.size == 1 && folders == 1 -> stringResource(R.string.delete_folder_text, victims[0].name)
+                else -> stringResource(R.string.delete_selected_text, victims.size)
+            },
+            onDismiss = { confirm = null },
+            onConfirm = {
+                confirm = null
+                selecting = false
+                selected = emptySet()
+                deleteAll(victims, failed)
+            }
+        )
     }
 
     when (val d = dialog) {
@@ -264,17 +355,78 @@ private fun EmptyNote(text: String) {
     )
 }
 
-/** One entry: kind tag, name and details; "⋯" opens its actions. */
+private fun <T> Set<T>.toggle(item: T): Set<T> = if (item in this) this - item else this + item
+
+/**
+ * Above the list: "Select" and "Clear", or while selecting, select all/none,
+ * delete the selection and leave. [onClear] null hides "Clear".
+ */
 @Composable
-private fun EntryRow(tag: String, name: String, subtitle: String, onClick: () -> Unit, onMore: (() -> Unit)?) {
+private fun SelectionBar(
+    selecting: Boolean,
+    selected: Int,
+    all: Boolean,
+    onSelect: () -> Unit,
+    onClear: (() -> Unit)?,
+    onToggleAll: () -> Unit,
+    onDelete: () -> Unit,
+    onDone: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (selecting) {
+            InkButton(stringResource(if (all) R.string.select_none else R.string.select_all), onClick = onToggleAll, height = 48.dp, modifier = Modifier.weight(1f))
+            InkButton(stringResource(R.string.delete_count, selected), onClick = onDelete, enabled = selected > 0, primary = true, height = 48.dp, modifier = Modifier.weight(1f))
+            InkButton(stringResource(R.string.done), onClick = onDone, height = 48.dp, modifier = Modifier.weight(1f))
+        } else {
+            InkButton(stringResource(R.string.select), onClick = onSelect, height = 48.dp, modifier = Modifier.weight(1f))
+            if (onClear != null) {
+                InkButton(stringResource(R.string.clear), onClick = onClear, height = 48.dp, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfirmDelete(text: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    InkDialog(
+        title = stringResource(R.string.delete_question),
+        onDismiss = onDismiss,
+        buttons = {
+            InkButton(stringResource(R.string.cancel), onClick = onDismiss, modifier = Modifier.weight(1f))
+            InkButton(stringResource(R.string.delete), primary = true, onClick = onConfirm, modifier = Modifier.weight(1f))
+        }
+    ) {
+        Text(text, fontSize = 16.sp)
+    }
+}
+
+/** One entry: kind tag, name and details; "⋯" opens its actions. [checked] non-null shows a check box. */
+@Composable
+private fun EntryRow(
+    tag: String,
+    name: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    onMore: (() -> Unit)?,
+    checked: Boolean? = null,
+) {
     Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 68.dp).border(1.5.dp, Ink),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 68.dp).border(if (checked == true) 3.dp else 1.5.dp, if (checked == true) Accent else Ink),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
             Modifier.weight(1f).tap(onClick = onClick).padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (checked != null) {
+                Box(
+                    Modifier.size(28.dp).border(2.dp, if (checked) Accent else Ink).background(if (checked) Accent else Paper),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (checked) Text("✓", color = Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(10.dp))
+            }
             InkTag(tag)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {

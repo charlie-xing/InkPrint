@@ -1,5 +1,5 @@
 namespace inkprint {
-    boolean start_server(u16 port, string storage_path, PrinterIdentity identity, boolean epub_enabled, PrintJobListener? listener);
+    boolean start_server(u16 port, string storage_path, PrinterIdentity identity, boolean epub_enabled, PrintDefaults defaults, PrintJobListener? listener);
     boolean stop_server();
     string get_version();
     string get_local_ip();
@@ -24,6 +24,14 @@ dictionary PrinterIdentity {
     string pdf_uuid;
     string epub_uuid;
     string host_name;
+};
+
+// What the printers offer clients by default.
+dictionary PrintDefaults {
+    // Colour printer; false = greyscale only (clients send grey documents).
+    boolean color;
+    // PWG media keyword of the default paper, e.g. "iso_a5_148x210mm".
+    string media;
 };
 
 dictionary ConversionOptions {

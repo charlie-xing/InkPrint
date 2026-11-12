@@ -59,6 +59,7 @@ async fn test_print_job_end_to_end() {
         storage_dir: dir.path().to_path_buf(),
         identity: inkprint_core::PrinterIdentity::fixed("TestPrinter"),
         epub_enabled: true,
+        defaults: Default::default(),
         callback: None,
     };
 
@@ -122,6 +123,7 @@ async fn test_get_printer_attributes_http() {
         storage_dir: dir.path().to_path_buf(),
         identity: inkprint_core::PrinterIdentity::fixed("TestPrinter2"),
         epub_enabled: true,
+        defaults: Default::default(),
         callback: None,
     };
 
@@ -201,6 +203,7 @@ async fn test_epub_printer_path() {
             storage_dir: dir.path().to_path_buf(),
             identity: inkprint_core::PrinterIdentity::fixed("Ink"),
             epub_enabled: enabled,
+            defaults: Default::default(),
             callback: None,
         };
         let handle = inkprint_core::server::listener::start(config).await.unwrap();

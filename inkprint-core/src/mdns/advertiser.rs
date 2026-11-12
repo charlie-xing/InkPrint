@@ -38,14 +38,14 @@ impl MdnsAdvertiser {
         props.insert("ty".to_string(),       profile.make_and_model.to_string());
         props.insert("adminurl".to_string(), format!("http://{}:{}/", ip_str, self.port));
         props.insert("UUID".to_string(),     profile.uuid.clone());
-        props.insert("Color".to_string(),    "F".to_string());
+        props.insert("Color".to_string(),    if profile.defaults.color { "T" } else { "F" }.to_string());
         props.insert("Duplex".to_string(),   "F".to_string());
         props.insert("Fax".to_string(),      "F".to_string());
         props.insert("Scan".to_string(),     "F".to_string());
         props.insert("Copies".to_string(),   "F".to_string());
         props.insert("PaperMax".to_string(), "legal-A4".to_string());
         props.insert("note".to_string(),     "E-ink reader virtual printer".to_string());
-        props.insert("URF".to_string(),      "CP1,W8,SRGB24,RS300".to_string());
+        props.insert("URF".to_string(),      profile.defaults.urf().to_string());
 
         let info = ServiceInfo::new(
             service_type,

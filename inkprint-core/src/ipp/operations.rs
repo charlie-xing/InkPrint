@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::types::*;
-use super::printer::{PrinterState, PrinterProfile, JobInfo, JobState, OutputFormat};
+use super::printer::{PrinterState, PrinterProfile, JobInfo, JobState, OutputFormat, Media, MEDIA};
 use super::response::{IppResponseBuilder, serialize_response, standard_operation_attrs};
 
 /// Callback when a print job completes
@@ -99,6 +99,7 @@ fn handle_get_printer_attributes(
     };
 
     let op = standard_operation_attrs(request.request_id);
+    let paper = profile.defaults.default_media();
 
     let mut printer_group = IppAttributeGroup::new(DelimiterTag::PrinterAttributes);
 
@@ -256,7 +257,7 @@ fn handle_get_printer_attributes(
     if want("color-supported") {
         printer_group.add(IppAttribute::new(
             "color-supported",
-            IppValue::Boolean(true),
+            IppValue::Boolean(profile.defaults.color),
         ));
     }
     if want("sides-supported") {
@@ -274,17 +275,17 @@ fn handle_get_printer_attributes(
     if want("print-color-mode-default") {
         printer_group.add(IppAttribute::new(
             "print-color-mode-default",
-            IppValue::Keyword("color".to_string()),
+            IppValue::Keyword(if profile.defaults.color { "color" } else { "monochrome" }.to_string()),
         ));
     }
     if want("print-color-mode-supported") {
-        printer_group.add(IppAttribute::new_multi(
-            "print-color-mode-supported",
-            vec![
-                IppValue::Keyword("color".to_string()),
-                IppValue::Keyword("monochrome".to_string()),
-            ],
-        ));
+        // A greyscale-only printer offers just monochrome, so clients turn
+        // the document grey themselves before sending it.
+        let mut modes = vec![IppValue::Keyword("monochrome".to_string())];
+        if profile.defaults.color {
+            modes.insert(0, IppValue::Keyword("color".to_string()));
+        }
+        printer_group.add(IppAttribute::new_multi("print-color-mode-supported", modes));
     }
     if want("orientation-requested-default") {
         printer_group.add(IppAttribute::new(
@@ -374,40 +375,31 @@ fn handle_get_printer_attributes(
     if want("media-default") {
         printer_group.add(IppAttribute::new(
             "media-default",
-            IppValue::Keyword("iso_a4_210x297mm".to_string()),
+            IppValue::Keyword(paper.keyword.to_string()),
         ));
     }
     if want("media-supported") {
         printer_group.add(IppAttribute::new_multi(
             "media-supported",
-            vec![
-                IppValue::Keyword("iso_a4_210x297mm".to_string()),
-                IppValue::Keyword("na_letter_8.5x11in".to_string()),
-            ],
+            MEDIA.iter().map(|m| IppValue::Keyword(m.keyword.to_string())).collect(),
         ));
     }
     if want("media-col-default") {
-        printer_group.add(IppAttribute::new(
-            "media-col-default",
-            media_col_a4(),
-        ));
+        printer_group.add(IppAttribute::new("media-col-default", media_col(paper)));
     }
     if want("media-col-database") {
         printer_group.add(IppAttribute::new_multi(
             "media-col-database",
-            vec![media_col_a4(), media_col_letter()],
+            MEDIA.iter().copied().map(media_col).collect(),
         ));
     }
     if want("media-col-ready") {
-        printer_group.add(IppAttribute::new(
-            "media-col-ready",
-            media_col_a4(),
-        ));
+        printer_group.add(IppAttribute::new("media-col-ready", media_col(paper)));
     }
     if want("media-ready") {
         printer_group.add(IppAttribute::new(
             "media-ready",
-            IppValue::Keyword("iso_a4_210x297mm".to_string()),
+            IppValue::Keyword(paper.keyword.to_string()),
         ));
     }
     if want("copies-default") {
@@ -435,12 +427,9 @@ fn handle_get_printer_attributes(
     if want("urf-supported") {
         printer_group.add(IppAttribute::new_multi(
             "urf-supported",
-            vec![
-                IppValue::Keyword("CP1".to_string()),
-                IppValue::Keyword("W8".to_string()),
-                IppValue::Keyword("SRGB24".to_string()),
-                IppValue::Keyword("RS300".to_string()),
-            ],
+            profile.defaults.urf().split(',')
+                .map(|k| IppValue::Keyword(k.to_string()))
+                .collect(),
         ));
     }
 
@@ -448,6 +437,25 @@ fn handle_get_printer_attributes(
         .add_group(op)
         .add_group(printer_group)
         .build()
+}
+
+/// The job name made safe for a file name, without the ".pdf" clients often
+/// put in it already (the saved file gets its own), so "a.pdf" never becomes
+/// "a.pdf.pdf".
+fn file_stem(job_name: &str) -> String {
+    let mut name = job_name.trim();
+    // get() rather than indexing: the cut may fall inside a multi-byte char
+    while let Some(stem) = name
+        .get(name.len().saturating_sub(4)..)
+        .filter(|ext| name.len() > 4 && ext.eq_ignore_ascii_case(".pdf"))
+        .map(|_| name[..name.len() - 4].trim_end())
+    {
+        name = stem;
+    }
+    name.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .take(64)
+        .collect()
 }
 
 fn handle_print_job(
@@ -524,13 +532,7 @@ fn handle_print_job(
         .unwrap_or_default()
         .as_secs();
 
-    // Sanitize job name for filename
-    let safe_name: String = job_name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
-        .take(64)
-        .collect();
-
-    let filename = format!("{}_{}_{}.pdf", now, job_id, safe_name);
+    let filename = format!("{}_{}_{}.pdf", now, job_id, file_stem(&job_name));
     let file_path = printer.storage_dir.join(&filename);
 
     let size_bytes = request.document_data.len() as u64;
@@ -686,27 +688,12 @@ fn get_available_space(path: &std::path::Path) -> Option<u64> {
     None
 }
 
-/// Build a media-col collection for A4 (210×297 mm, dimensions in 1/100 mm units).
-fn media_col_a4() -> IppValue {
+/// Build a borderless media-col collection (dimensions in 1/100 mm).
+fn media_col(m: Media) -> IppValue {
     IppValue::Collection(vec![
         ("media-size".to_string(), IppValue::Collection(vec![
-            ("x-dimension".to_string(), IppValue::Integer(21000)),
-            ("y-dimension".to_string(), IppValue::Integer(29700)),
-        ])),
-        ("media-bottom-margin".to_string(), IppValue::Integer(0)),
-        ("media-left-margin".to_string(),  IppValue::Integer(0)),
-        ("media-right-margin".to_string(), IppValue::Integer(0)),
-        ("media-top-margin".to_string(),   IppValue::Integer(0)),
-        ("media-type".to_string(),         IppValue::Keyword("stationery".to_string())),
-    ])
-}
-
-/// Build a media-col collection for US Letter (215.9×279.4 mm).
-fn media_col_letter() -> IppValue {
-    IppValue::Collection(vec![
-        ("media-size".to_string(), IppValue::Collection(vec![
-            ("x-dimension".to_string(), IppValue::Integer(21590)),
-            ("y-dimension".to_string(), IppValue::Integer(27940)),
+            ("x-dimension".to_string(), IppValue::Integer(m.width)),
+            ("y-dimension".to_string(), IppValue::Integer(m.height)),
         ])),
         ("media-bottom-margin".to_string(), IppValue::Integer(0)),
         ("media-left-margin".to_string(),  IppValue::Integer(0)),
@@ -818,6 +805,16 @@ fn error_response(request_id: u32, status: IppStatusCode, message: &str) -> IppR
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_stem_drops_pdf_extension() {
+        assert_eq!(file_stem("Report.pdf"), "Report");
+        assert_eq!(file_stem("Report.PDF.pdf"), "Report");
+        assert_eq!(file_stem("周报 第3期.pdf"), "周报_第3期");
+        assert_eq!(file_stem("文档"), "文档");
+        assert_eq!(file_stem(".pdf"), ".pdf");
+        assert_eq!(file_stem("v1.2 notes"), "v1.2_notes");
+    }
+
     use super::*;
     use crate::ipp::parser::parse_ipp_request;
 
@@ -835,7 +832,7 @@ mod tests {
     }
 
     fn make_printer(dir: &std::path::Path) -> Arc<PrinterState> {
-        Arc::new(PrinterState::new(&crate::ipp::printer::PrinterIdentity::fixed("InkPrint"), true, dir.to_path_buf()))
+        Arc::new(PrinterState::new(&crate::ipp::printer::PrinterIdentity::fixed("InkPrint"), true, &Default::default(), dir.to_path_buf()))
     }
 
     fn build_request(op: u16, request_id: u32, op_attrs: Vec<(u8, &str, &[u8])>, doc_data: &[u8]) -> Vec<u8> {
@@ -1134,5 +1131,29 @@ mod tests {
         assert_eq!(got, vec![OutputFormat::Pdf, OutputFormat::Epub]);
         let epub_job = printer.active_jobs.iter().find(|j| j.output == OutputFormat::Epub).unwrap();
         assert!(epub_job.file_path.as_ref().unwrap().exists());
+    }
+
+    #[test]
+    fn test_print_defaults_drive_colour_and_paper() {
+        let dir = tempfile::tempdir().unwrap();
+        let defaults = crate::ipp::printer::PrintDefaults { color: false, media: "iso_a5_148x210mm".into() };
+        let printer = Arc::new(PrinterState::new(
+            &crate::ipp::printer::PrinterIdentity::fixed("InkPrint"), false, &defaults, dir.path().to_path_buf(),
+        ));
+        let raw = build_request(0x000B, 1, vec![(0x45, "printer-uri", PDF_URI.as_bytes())], b"");
+        let resp = parse_ipp_request(&dispatch(
+            &parse_ipp_request(&raw).unwrap(), &printer, &printer.profiles[0], PDF_URI, None,
+        )).unwrap();
+        let g = resp.attribute_groups.iter()
+            .find(|g| g.delimiter == DelimiterTag::PrinterAttributes)
+            .unwrap();
+        assert_eq!(g.get("color-supported"), Some(&IppValue::Boolean(false)));
+        assert_eq!(g.get("print-color-mode-default"), Some(&IppValue::Keyword("monochrome".into())));
+        assert_eq!(g.get("media-default"), Some(&IppValue::Keyword("iso_a5_148x210mm".into())));
+        assert_eq!(g.get("media-ready"), Some(&IppValue::Keyword("iso_a5_148x210mm".into())));
+        let modes = g.attributes.iter().find(|a| a.name == "print-color-mode-supported").unwrap();
+        assert_eq!(modes.values, vec![IppValue::Keyword("monochrome".into())]);
+        let urf = g.attributes.iter().find(|a| a.name == "urf-supported").unwrap();
+        assert!(!urf.values.contains(&IppValue::Keyword("SRGB24".into())));
     }
 }

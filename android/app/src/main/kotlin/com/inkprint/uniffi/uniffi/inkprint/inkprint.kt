@@ -829,7 +829,7 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_inkprint_core_fn_func_release_models(uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    fun uniffi_inkprint_core_fn_func_start_server(`port`: Short,`storagePath`: RustBuffer.ByValue,`identity`: RustBuffer.ByValue,`epubEnabled`: Byte,`listener`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_inkprint_core_fn_func_start_server(`port`: Short,`storagePath`: RustBuffer.ByValue,`identity`: RustBuffer.ByValue,`epubEnabled`: Byte,`defaults`: RustBuffer.ByValue,`listener`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     fun uniffi_inkprint_core_fn_func_stop_server(uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
@@ -1005,7 +1005,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_inkprint_core_checksum_func_release_models() != 27576.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_inkprint_core_checksum_func_start_server() != 20180.toShort()) {
+    if (lib.uniffi_inkprint_core_checksum_func_start_server() != 945.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_inkprint_core_checksum_func_stop_server() != 9356.toShort()) {
@@ -1940,6 +1940,38 @@ public object FfiConverterTypeConversionStats: FfiConverterRustBuffer<Conversion
 
 
 
+data class PrintDefaults (
+    var `color`: kotlin.Boolean, 
+    var `media`: kotlin.String
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePrintDefaults: FfiConverterRustBuffer<PrintDefaults> {
+    override fun read(buf: ByteBuffer): PrintDefaults {
+        return PrintDefaults(
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PrintDefaults) = (
+            FfiConverterBoolean.allocationSize(value.`color`) +
+            FfiConverterString.allocationSize(value.`media`)
+    )
+
+    override fun write(value: PrintDefaults, buf: ByteBuffer) {
+            FfiConverterBoolean.write(value.`color`, buf)
+            FfiConverterString.write(value.`media`, buf)
+    }
+}
+
+
+
 data class PrinterIdentity (
     var `pdfName`: kotlin.String, 
     var `epubName`: kotlin.String, 
@@ -2250,11 +2282,11 @@ public object FfiConverterOptionalTypePrintJobListener: FfiConverterRustBuffer<P
 }
     
     
- fun `startServer`(`port`: kotlin.UShort, `storagePath`: kotlin.String, `identity`: PrinterIdentity, `epubEnabled`: kotlin.Boolean, `listener`: PrintJobListener?): kotlin.Boolean {
+ fun `startServer`(`port`: kotlin.UShort, `storagePath`: kotlin.String, `identity`: PrinterIdentity, `epubEnabled`: kotlin.Boolean, `defaults`: PrintDefaults, `listener`: PrintJobListener?): kotlin.Boolean {
             return FfiConverterBoolean.lift(
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_inkprint_core_fn_func_start_server(
-        FfiConverterUShort.lower(`port`),FfiConverterString.lower(`storagePath`),FfiConverterTypePrinterIdentity.lower(`identity`),FfiConverterBoolean.lower(`epubEnabled`),FfiConverterOptionalTypePrintJobListener.lower(`listener`),_status)
+        FfiConverterUShort.lower(`port`),FfiConverterString.lower(`storagePath`),FfiConverterTypePrinterIdentity.lower(`identity`),FfiConverterBoolean.lower(`epubEnabled`),FfiConverterTypePrintDefaults.lower(`defaults`),FfiConverterOptionalTypePrintJobListener.lower(`listener`),_status)
 }
     )
     }
